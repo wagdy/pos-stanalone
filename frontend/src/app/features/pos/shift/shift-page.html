@@ -1,0 +1,187 @@
+<div class="toolbar">
+  <h1>Shift &amp; Z report <span class="inline-ar">الوردية وتقرير Z</span></h1>
+  <span class="spacer"></span>
+  <form class="clock" (ngSubmit)="clock()" aria-label="Clock in or out">
+    <mat-icon>badge</mat-icon>
+    <input name="clockPin" [(ngModel)]="clockPin" inputmode="numeric" maxlength="4" type="password" placeholder="PIN" aria-label="Staff PIN to clock in or out" />
+    <button mat-stroked-button type="submit">Clock in / out · حضور</button>
+    @if (lastClock()) {
+      <span class="tag ok">{{ lastClock() }}</span>
+    }
+  </form>
+</div>
+
+@if (busy() || shift() === undefined) {
+  <mat-progress-bar mode="indeterminate" />
+}
+
+@if (shift() === null) {
+  <section class="card open-card">
+    <h2><mat-icon>lock_open</mat-icon> Open the shift <span class="inline-ar">فتح الوردية</span></h2>
+    <p class="muted">The cash in the drawer to start with (the float). Payments are taken once it is open.</p>
+    <form class="row" (ngSubmit)="open()">
+      <mat-form-field subscriptSizing="dynamic">
+        <mat-label>Opening float · العهدة</mat-label>
+        <input matInput name="float" type="number" min="0" step="any" [(ngModel)]="openingFloat" />
+      </mat-form-field>
+      <button mat-flat-button type="submit" [disabled]="busy()"><mat-icon>play_arrow</mat-icon> Open shift · فتح</button>
+    </form>
+  </section>
+}
+
+@if (shift(); as s) {
+  <section class="card head">
+    <div>
+      <h2>Shift {{ s.number }} <span class="tag ok">Open · مفتوحة</span></h2>
+      <p class="muted">{{ s.businessDate }} · opened by {{ s.openedBy }} at {{ s.openedAtUtc | date: 'HH:mm' }} · float {{ s.openingFloat | money }}</p>
+    </div>
+    @if (report(); as z) {
+      <button mat-stroked-button (click)="preview(z)"><mat-icon>receipt_long</mat-icon> X report · تقرير X</button>
+    }
+  </section>
+
+  @if (report(); as z) {
+    <div class="tiles">
+      <div class="tile"><span>Net sales · صافي</span><strong>{{ z.netSales | money }}</strong><small>{{ z.checks }} checks · {{ z.guests }} guests</small></div>
+      <div class="tile"><span>Tax · الضريبة</span><strong>{{ z.tax | money }}</strong><small>service {{ z.service | money }}</small></div>
+      <div class="tile"><span>Cash · كاش</span><strong>{{ z.cashSales | money }}</strong></div>
+      <div class="tile"><span>Visa · فيزا</span><strong>{{ z.cardSales | money }}</strong><small>wallet {{ z.walletSales | money }}</small></div>
+      <div class="tile"><span>Discounts · خصومات</span><strong>{{ z.discounts + z.redemptions | money }}</strong></div>
+      <div class="tile"><span>Paid out · مصروفات</span><strong>{{ z.paidOuts | money }}</strong></div>
+      <div class="tile warn"><span>Void before · قبل المطبخ</span><strong>{{ z.voidBeforeAmount | money }}</strong><small>{{ z.voidBeforeCount }} items</small></div>
+      <div class="tile bad"><span>Void after · بعد المطبخ</span><strong>{{ z.voidAfterAmount | money }}</strong><small>{{ z.voidAfterCount }} items</small></div>
+      <div class="tile primary"><span>Expected cash · النقدية المتوقعة</span><strong>{{ z.expectedCash | money }}</strong><small>float + cash − paid out</small></div>
+    </div>
+
+    <div class="cols">
+      <section class="card">
+        <h3>By type · حسب النوع</h3>
+        <table class="grid">
+          <tbody>
+            @for (t of z.byType; track t.type) {
+              <tr><td>{{ typeLabels[t.type].en }} <span class="inline-ar">{{ typeLabels[t.type].ar }}</span></td><td class="num">{{ t.checks }}</td><td class="num">{{ t.total | money }}</td></tr>
+            } @empty {
+              <tr><td class="muted">No checks paid yet.</td></tr>
+            }
+          </tbody>
+        </table>
+        @if (z.voidAfterReasons.length) {
+          <h3>Voids after kitchen, by reason · أسباب الإلغاء</h3>
+          <table class="grid">
+            <tbody>
+              @for (r of z.voidAfterReasons; track r.reason) {
+                <tr><td>{{ r.reason }}</td><td class="num">{{ r.count }}</td><td class="num">{{ r.amount | money }}</td></tr>
+              }
+            </tbody>
+          </table>
+        }
+        @if (z.drivers.length) {
+          <h3>Drivers · السائقين</h3>
+          <table class="grid">
+            <tbody>
+              @for (d of z.drivers; track d.driver) {
+                <tr><td>{{ d.driver }}</td><td class="num">{{ d.orders }}</td><td class="num">{{ d.cash | money }} cash</td></tr>
+              }
+            </tbody>
+          </table>
+        }
+      </section>
+
+      <section class="card">
+        <h3>Paid out · صرف من الدرج</h3>
+        <form class="paid-out" (ngSubmit)="addPaidOut()">
+          <mat-button-toggle-group name="kind" [(ngModel)]="paidOut.kind" aria-label="What it was">
+            @for (k of paidOutKinds; track k) {
+              <mat-button-toggle [value]="k">{{ paidOutLabels[k].en }} · {{ paidOutLabels[k].ar }}</mat-button-toggle>
+            }
+          </mat-button-toggle-group>
+          <div class="row">
+            <mat-form-field subscriptSizing="dynamic">
+              <mat-label>Amount · المبلغ</mat-label>
+              <input matInput name="amount" type="number" min="0" step="any" [(ngModel)]="paidOut.amount" />
+            </mat-form-field>
+            <mat-form-field subscriptSizing="dynamic" class="grow">
+              <mat-label>For · البيان</mat-label>
+              <input matInput name="reason" maxlength="200" [(ngModel)]="paidOut.reason" />
+            </mat-form-field>
+            @if (paidOut.kind !== 'Expense') {
+              <mat-form-field subscriptSizing="dynamic">
+                <mat-label>{{ paidOut.kind === 'Driver' ? 'Driver · السائق' : 'Employee · الموظف' }}</mat-label>
+                <input matInput name="staff" maxlength="120" [(ngModel)]="paidOut.staffName" />
+              </mat-form-field>
+            }
+            <button mat-flat-button type="submit" [disabled]="busy()"><mat-icon>payments</mat-icon> Pay out</button>
+          </div>
+        </form>
+        <table class="grid">
+          <tbody>
+            @for (p of s.paidOuts; track p.id) {
+              <tr>
+                <td>{{ p.atUtc | date: 'HH:mm' }}</td>
+                <td><span class="tag" [class.info]="p.kind === 'StaffAdvance'" [class.warn]="p.kind === 'Driver'">{{ paidOutLabels[p.kind].en }}</span></td>
+                <td>{{ p.reason }}{{ p.staffName ? ' · ' + p.staffName : '' }}</td>
+                <td class="num">{{ p.amount | money }}</td>
+              </tr>
+            } @empty {
+              <tr><td class="muted">Nothing paid out.</td></tr>
+            }
+          </tbody>
+        </table>
+      </section>
+    </div>
+
+    <section class="card close-card">
+      <h2><mat-icon>lock</mat-icon> Close the shift <span class="inline-ar">إغلاق الوردية</span></h2>
+      @if (z.openChecks > 0) {
+        <p class="warn-text"><mat-icon>warning</mat-icon> {{ z.openChecks }} checks are still open: settle or move them first. · يوجد شيكات مفتوحة</p>
+      }
+      <form class="row" (ngSubmit)="close()">
+        <mat-form-field subscriptSizing="dynamic">
+          <mat-label>Cash counted · النقدية الفعلية</mat-label>
+          <input matInput name="counted" type="number" min="0" step="any" [(ngModel)]="counted" />
+        </mat-form-field>
+        <div class="variance">
+          <span>Expected {{ z.expectedCash | money }}</span>
+          @if (varianceOf(z); as v) {
+            <strong [class.short]="v < 0" [class.over]="v > 0">Variance {{ v | money }}</strong>
+          } @else if (counted != null) {
+            <strong>Variance {{ 0 | money }}</strong>
+          }
+        </div>
+        <mat-checkbox name="printZ" [(ngModel)]="printZ">Print the Z report</mat-checkbox>
+        <button mat-flat-button class="danger-fill" type="submit" [disabled]="busy() || counted == null || z.openChecks > 0">
+          <mat-icon>lock</mat-icon> Close shift · إغلاق
+        </button>
+      </form>
+    </section>
+  }
+}
+
+<section class="card">
+  <h3>Past shifts · الورديات السابقة</h3>
+  <div class="table-wrap">
+    <table class="grid">
+      <thead>
+        <tr><th>Shift</th><th>Day</th><th>Opened</th><th>Closed</th><th class="num">Float</th><th class="num">Counted</th><th></th></tr>
+      </thead>
+      <tbody>
+        @for (h of closedShifts(); track h.id) {
+          <tr>
+            <td><strong>{{ h.number }}</strong></td>
+            <td>{{ h.businessDate }}</td>
+            <td>{{ h.openedAtUtc | date: 'dd/MM HH:mm' }} · {{ h.openedBy }}</td>
+            <td>{{ h.closedAtUtc | date: 'dd/MM HH:mm' }} · {{ h.closedBy }}</td>
+            <td class="num">{{ h.openingFloat | money }}</td>
+            <td class="num">{{ h.countedCash ?? 0 | money }}</td>
+            <td class="actions">
+              <button mat-button (click)="previewShift(h)"><mat-icon>receipt_long</mat-icon> Z report</button>
+              <button mat-button (click)="costingSheet(h.businessDate)"><mat-icon>table_view</mat-icon> Costing sheet</button>
+            </td>
+          </tr>
+        } @empty {
+          <tr><td colspan="7" class="muted">No shift closed yet.</td></tr>
+        }
+      </tbody>
+    </table>
+  </div>
+</section>

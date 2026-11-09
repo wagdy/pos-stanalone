@@ -1,0 +1,99 @@
+<main class="sign-in">
+  <section class="card">
+    <header class="brand">
+      <div class="mark" [class.logo]="company.logoUrl()">
+        @if (company.logoUrl(); as logo) {
+          <img [src]="logo" alt="" />
+        } @else if (initials()) {
+          <span>{{ initials() }}</span>
+        } @else {
+          <mat-icon>point_of_sale</mat-icon>
+        }
+      </div>
+      <h1>{{ company.name() }}</h1>
+      @if (company.settings().name) {
+        <p class="product">Restaurant POS <span class="ar">نقطة البيع</span></p>
+      }
+    </header>
+
+    @if (reason() === 'expired') {
+      <p class="notice" role="status">
+        <mat-icon>lock_clock</mat-icon>
+        <span>Your session has ended. Sign in again. <span class="ar">سجّل الدخول مرة أخرى</span></span>
+      </p>
+    }
+
+    @if (mode() === 'pin') {
+      <div class="welcome">
+        <h2>Your PIN <span class="ar">الرقم السري</span></h2>
+        <p>Four digits, on the pad or the keyboard. <span class="ar">أربعة أرقام</span></p>
+      </div>
+      <app-pin-pad [disabled]="busy()" [error]="pinError()" (entered)="signInWithPin($event)" />
+      <button mat-button class="switch" type="button" (click)="mode.set('password')">
+        <mat-icon>alternate_email</mat-icon> Manager: email and password · دخول المدير
+      </button>
+    } @else {
+    <div class="welcome">
+      <h2>Sign in <span class="ar">تسجيل الدخول</span></h2>
+      <p>With your email and your password. <span class="ar">بالبريد الإلكتروني وكلمة المرور</span></p>
+    </div>
+
+    <form (ngSubmit)="submit()" aria-label="Sign in">
+      <mat-form-field class="field" appearance="outline" hideRequiredMarker>
+        <mat-icon matPrefix>alternate_email</mat-icon>
+        <mat-label>Email · البريد الإلكتروني</mat-label>
+        <input
+          matInput
+          name="login"
+          type="email"
+          autocomplete="username"
+          autocapitalize="none"
+          spellcheck="false"
+          [(ngModel)]="login"
+          [disabled]="busy()"
+          required
+        />
+      </mat-form-field>
+
+      <mat-form-field class="field" appearance="outline" hideRequiredMarker>
+        <mat-icon matPrefix>lock</mat-icon>
+        <mat-label>Password · كلمة المرور</mat-label>
+        <input
+          matInput
+          name="secret"
+          [type]="showSecret() ? 'text' : 'password'"
+          autocomplete="current-password"
+          [(ngModel)]="secret"
+          [disabled]="busy()"
+          required
+        />
+        <button
+          mat-icon-button
+          matSuffix
+          type="button"
+          (click)="showSecret.set(!showSecret())"
+          [attr.aria-label]="showSecret() ? 'Hide the password' : 'Show the password'"
+        >
+          <mat-icon>{{ showSecret() ? 'visibility_off' : 'visibility' }}</mat-icon>
+        </button>
+      </mat-form-field>
+
+      @if (error(); as message) {
+        <p class="error" role="alert"><mat-icon>error_outline</mat-icon><span>{{ message }}</span></p>
+      }
+
+      <!-- Not disabled while the fields fill: Enter straight after typing (or after the browser fills them in) still signs in. -->
+      <button mat-flat-button class="submit" type="submit" [disabled]="busy()">
+        @if (busy()) {
+          <mat-spinner diameter="20" />
+        }
+        {{ busy() ? 'Signing in…' : 'Sign in' }}
+        @if (!busy()) {
+          <mat-icon iconPositionEnd>arrow_forward</mat-icon>
+        }
+      </button>
+    </form>
+    <button mat-button class="switch" type="button" (click)="mode.set('pin')"><mat-icon>dialpad</mat-icon> Sign in with a PIN · الدخول بالرقم السري</button>
+    }
+  </section>
+</main>

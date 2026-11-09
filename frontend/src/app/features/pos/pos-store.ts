@@ -1,0 +1,179 @@
+import { Injectable, computed, inject, signal } from '@angular/core';
+import { firstValueFrom } from 'rxjs';
+import { LiveService } from '../../core/pos/live.service';
+import { OfflineStore } from '../../core/pos/offline';
+import {
+  Floor,
+  Menu,
+  MenuItem,
+  NewLine,
+  NewPayment,
+  Order,
+  OrderSummary,
+  OrderType,
+  PosApi,
+  StockOutcome,
+  newId,
+} from '../../core/pos/pos.api';
+
+// What the till's screens share: the menu and the floor (kept in this browser too, so they open
+// while the server cannot be reached) and the open checks, each reloaded the moment the server says
+// it changed.
+@Injectable({ providedIn: 'root' })
+export class PosStore {
+  private readonly api = inject(PosApi);
+  private readonly offline = inject(OfflineStore);
+  private readonly live = inject(LiveService);
+
+  readonly menu = signal<Menu | null>(null);
+  readonly floor = signal<Floor | null>(null);
+  readonly open = signal<OrderSummary[]>([]);
+  // The menu or floor shown is this browser's copy: the server could not be asked.
+  readonly stale = signal(false);
+  readonly itemsById = computed(() => new Map((this.menu()?.items ?? []).map((i) => [i.id, i])));
+
+  private started = false;
+
+  start(): void {
+    if (this.started) {
+      return;
+    }
+    this.started = true;
+    void this.loadMenu();
+    void this.loadFloor();
+    void this.loadOpen();
+    this.live.menuChanged.subscribe(() => void this.loadMenu());
+    this.live.floorChanged.subscribe(() => {
+      void this.loadFloor();
+      void this.loadOpen();
+    });
+    this.live.ordersChanged.subscribe(() => void this.loadOpen());
+    this.live.reconnected.subscribe(() => {
+      void this.loadMenu();
+      void this.loadFloor();
+      void this.loadOpen();
+    });
+  }
+
+  async loadMenu(): Promise<void> {
+    try {
+      const { value, stale } = await this.offline.cached('menu', () => this.api.menu());
+      this.menu.set(value);
+      this.stale.set(stale);
+    } catch {
+      // Neither the server nor a copy: the screens say the menu could not be loaded.
+    }
+  }
+
+  async loadFloor(): Promise<void> {
+    try {
+      const { value, stale } = await this.offline.cached('floor', () => this.api.floor());
+      this.floor.set(value);
+      this.stale.set(stale);
+    } catch {
+      // As the menu.
+    }
+  }
+
+  async loadOpen(): Promise<void> {
+    try {
+      this.open.set(await firstValueFrom(this.api.openOrders()));
+    } catch {
+      // Kept as they were.
+    }
+  }
+
+  item(id: string): MenuItem | undefined {
+    return this.itemsById().get(id);
+  }
+}
+
+// A check opened while the server could not be reached: the terminal works on it by its id (the
+// server takes it with that id once it answers); what is put on it shows as waiting until then.
+export function pendingOrder(id: string, type: OrderType, tableId: string | null, tableLabel: string | null, guests: number, openedBy: string): Order {
+  const now = new Date().toISOString();
+  return {
+    id, number: 0, businessDate: now.slice(0, 10), type, status: 'Open', tableId, tableLabel, checkLabel: null, guests, splitFromId: null,
+    mergedIntoId: null, splitWays: null, openedBy, openedAtUtc: now, notes: null, customer: null, deliveryAddress: null, driverName: null,
+    servicePercent: 0, taxPercent: 0, discountAmount: 0, discountReason: null, pointsRedeemed: 0, pointsEarned: 0, billPrints: 0,
+    billPrintedAtUtc: null, paidAtUtc: null, settledBy: null, shiftId: null,
+    totals: { gross: 0, lineDiscounts: 0, billDiscount: 0, redemption: 0, net: 0, service: 0, tax: 0, total: 0, paid: 0, due: 0 },
+    lines: [], voids: [], payments: [], tickets: [],
+  };
+}
+
+// A check as the sync drawer names it: its number, or "New check" while it waits to reach the server.
+function checkName(order: Pick<Order, 'number'>): string {
+  return order.number ? `Check #${order.number}` : 'New check';
+}
+
+// The till's commands on a check, sent through the terminal's outbox: when the server cannot be
+// reached each is kept, with the ids it was made with, and sent once it can. The answer is the
+// check as the server now has it, or null when it waits.
+@Injectable({ providedIn: 'root' })
+export class OrderCommands {
+  private readonly offline = inject(OfflineStore);
+  private readonly api = inject(PosApi);
+
+  open(type: OrderType, tableId: string | null, guests: number, customer: { name?: string | null; phone?: string | null } = {}, orderId = newId()) {
+    return this.offline.send<Order>({
+      method: 'POST',
+      url: '/api/orders',
+      body: { orderId, type, tableId, guests, customerName: customer.name ?? null, customerPhone: customer.phone ?? null },
+      label: `New ${type === 'DineIn' ? 'table' : type.toLowerCase()} check`,
+      orderId,
+    });
+  }
+
+  add(order: Pick<Order, 'id' | 'number'>, items: NewLine[], sendToKitchen = false) {
+    return this.offline.send<Order>({
+      method: 'POST',
+      url: `/api/orders/${order.id}/items`,
+      body: { items, sendToKitchen },
+      label: `${checkName(order)}: ${items.reduce((n, i) => n + i.quantity, 0)} items${sendToKitchen ? ', sent to the kitchen' : ''}`,
+      orderId: order.id,
+    });
+  }
+
+  send(order: Pick<Order, 'id' | 'number'>) {
+    return this.offline.send<Order>({ method: 'POST', url: `/api/orders/${order.id}/send`, body: {}, label: `${checkName(order)}: sent to the kitchen`, orderId: order.id });
+  }
+
+  change(order: Pick<Order, 'id' | 'number'>, lineId: string, quantity: number, notes: string | null) {
+    return this.offline.send<Order>({
+      method: 'PUT',
+      url: `/api/orders/${order.id}/lines/${lineId}`,
+      body: { quantity, notes },
+      label: `${checkName(order)}: item changed`,
+      orderId: order.id,
+    });
+  }
+
+  // With a manager's PIN, straight to the server: a PIN is never kept in the browser to send later.
+  void(order: Pick<Order, 'id' | 'number'>, items: { lineId: string; quantity: number }[], reason: string | null, outcome: StockOutcome, managerPin: string | null) {
+    if (managerPin) {
+      return firstValueFrom(this.api.void(order.id, { items: items.map((i) => ({ voidId: newId(), ...i })), reason, outcome, managerPin }));
+    }
+    return this.offline.send<Order>({
+      method: 'POST',
+      url: `/api/orders/${order.id}/voids`,
+      body: { items: items.map((i) => ({ voidId: newId(), ...i })), reason, outcome, managerPin },
+      label: `${checkName(order)}: ${items.length} voided`,
+      orderId: order.id,
+    });
+  }
+
+  pay(order: Pick<Order, 'id' | 'number'>, payments: NewPayment[], printReceipt: boolean) {
+    return this.offline.send<Order>({
+      method: 'POST',
+      url: `/api/orders/${order.id}/pay`,
+      body: { payments, printReceipt },
+      label: `${checkName(order)}: paid`,
+      orderId: order.id,
+    });
+  }
+
+  bill(order: Pick<Order, 'id' | 'number'>) {
+    return this.offline.send<Order>({ method: 'POST', url: `/api/orders/${order.id}/bill`, body: {}, label: `${checkName(order)}: bill printed`, orderId: order.id });
+  }
+}

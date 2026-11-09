@@ -14,7 +14,8 @@ namespace Pos.Application.Catalog;
 
 public sealed record OptionDto(Guid Id, string Name, string? NameAr, decimal Price);
 
-public sealed record StationDto(Guid Id, string Name, string? NameAr, int SortOrder, Guid? PrinterId, string? PrinterName);
+public sealed record StationDto(Guid Id, string Name, string? NameAr, int SortOrder, Guid? PrinterId, string? PrinterName,
+    PrinterConnection? PrinterConnection = null);
 
 public sealed record CategoryDto(Guid Id, string Name, string? NameAr, int SortOrder, string? Color, bool IsActive);
 
@@ -39,7 +40,9 @@ public sealed record MenuDto(
     decimal TaxPercent,
     decimal ServicePercent,
     decimal RedemptionValuePer100Points,
-    decimal CashierDiscountLimitPercent);
+    decimal CashierDiscountLimitPercent,
+    // The cashier's documents print in the terminal's browser: there is no network cashier printer.
+    bool CashierPrintsInBrowser);
 
 public sealed record GetMenuQuery : IRequest<MenuDto>;
 
@@ -49,16 +52,20 @@ internal sealed class GetMenuHandler(
 {
     public async Task<MenuDto> Handle(GetMenuQuery request, CancellationToken cancellationToken)
     {
-        var printerNames = (await printers.GetAllAsync(cancellationToken)).ToDictionary(p => p.Id, p => p.Name);
+        var all = (await printers.GetAllAsync(cancellationToken)).Where(p => p.IsActive).ToList();
+        var byId = all.ToDictionary(p => p.Id);
+        var cashier = all.Where(p => p.Role == PrinterRole.Cashier).OrderBy(p => p.Name).FirstOrDefault();
         var pos = await settings.GetAsync(cancellationToken);
         return new MenuDto(
             (await categories.GetAllAsync(cancellationToken)).OrderBy(c => c.SortOrder).ThenBy(c => c.Name)
                 .Select(c => new CategoryDto(c.Id, c.Name, c.NameAr, c.SortOrder, c.Color, c.IsActive)).ToList(),
             (await items.GetAllAsync(cancellationToken)).OrderBy(i => i.Code).Select(MenuMapping.Dto).ToList(),
             (await stations.GetAllAsync(cancellationToken)).OrderBy(s => s.SortOrder).ThenBy(s => s.Name)
-                .Select(s => new StationDto(s.Id, s.Name, s.NameAr, s.SortOrder, s.PrinterId, s.PrinterId is { } p ? printerNames.GetValueOrDefault(p) : null))
+                .Select(s => new StationDto(s.Id, s.Name, s.NameAr, s.SortOrder, s.PrinterId, s.PrinterId is { } p ? byId.GetValueOrDefault(p)?.Name : null,
+                    s.PrinterId is { } q ? byId.GetValueOrDefault(q)?.Connection : null))
                 .ToList(),
-            pos.QuickNotes, pos.VoidReasons, pos.TaxPercent, pos.ServicePercent, pos.RedemptionValuePer100Points, pos.CashierDiscountLimitPercent);
+            pos.QuickNotes, pos.VoidReasons, pos.TaxPercent, pos.ServicePercent, pos.RedemptionValuePer100Points, pos.CashierDiscountLimitPercent,
+            cashier is null || cashier.Connection == PrinterConnection.Browser);
     }
 }
 

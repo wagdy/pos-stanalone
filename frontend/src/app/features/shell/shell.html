@@ -1,0 +1,83 @@
+<mat-toolbar class="toolbar">
+  <a class="brand" [routerLink]="home()" [attr.aria-label]="company.name() + ': home'">
+    @if (company.logoUrl(); as logo) {
+      <img class="logo" [src]="logo" alt="" />
+    } @else {
+      <span class="mark"><mat-icon>point_of_sale</mat-icon></span>
+    }
+    <span class="brand-text">{{ company.name() }}</span>
+  </a>
+
+  <nav>
+    <a mat-button routerLink="/pos" routerLinkActive="active" aria-label="Point of sale" matTooltip="Point of sale · نقطة البيع" [matTooltipDisabled]="!compactNav()">
+      <mat-icon>point_of_sale</mat-icon>
+      <span class="nav-text">Point of sale</span>
+    </a>
+    <a *appCan="Permissions.UsersManage" mat-button routerLink="/users" routerLinkActive="active" aria-label="Staff" matTooltip="Staff · الموظفون" [matTooltipDisabled]="!compactNav()">
+      <mat-icon>badge</mat-icon>
+      <span class="nav-text">Staff</span>
+    </a>
+    <a *appCan="Permissions.SettingsManage" mat-button routerLink="/settings" routerLinkActive="active" aria-label="Company settings" matTooltip="Company settings · إعدادات الشركة" [matTooltipDisabled]="!compactNav()">
+      <mat-icon>settings</mat-icon>
+      <span class="nav-text">Company</span>
+    </a>
+  </nav>
+
+  <span class="spacer"></span>
+
+  <!-- The sync light: online and synced, or local with what waits; it opens the sync drawer. -->
+  <button type="button" class="sync-pill" [class]="sync.label().tone" (click)="openSync()" [attr.aria-label]="sync.label().en + '. Open the sync drawer.'"
+    [matTooltip]="sync.label().ar + ' · ' + (live.connected() ? 'Live' : 'Live updates paused')">
+    <mat-icon>{{ sync.label().tone === 'ok' ? 'cloud_done' : sync.label().tone === 'bad' ? 'cloud_off' : 'cloud_sync' }}</mat-icon>
+    <span class="sync-text">{{ sync.label().en }}</span>
+    @if (sync.syncing()) {
+      <span class="spin" aria-hidden="true"></span>
+    }
+  </button>
+
+  <button mat-icon-button (click)="printer.setStation(!printer.station())" [class.station-on]="printer.station()"
+    [attr.aria-pressed]="printer.station()"
+    [matTooltip]="printer.station() ? 'This browser is the print station: it prints what the server asks (checks, browser kitchen tickets). · محطة الطباعة' : 'Not the print station: tap to print here what the server asks.'"
+    aria-label="Print station">
+    <mat-icon>{{ printer.station() ? 'print' : 'print_disabled' }}</mat-icon>
+  </button>
+
+  <button mat-button [matMenuTriggerFor]="userMenu" class="user">
+    <span class="avatar" aria-hidden="true">{{ initials() }}</span>
+    <span class="user-name">{{ auth.me()?.fullName }}</span>
+    <mat-icon class="chevron" iconPositionEnd>expand_more</mat-icon>
+  </button>
+  <mat-menu #userMenu="matMenu">
+    <!-- The menu item wraps its content in an inline span of its own, so the name and the
+         role are stacked by a span inside it. -->
+    <div mat-menu-item disabled>
+      <span class="who">
+        <span>{{ auth.me()?.fullName }}</span>
+        <small>@if (auth.me(); as me) {{{ roleLabels[me.role].en }}{{ me.email ? ' · ' + me.email : '' }}}</small>
+      </span>
+    </div>
+    <button mat-menu-item (click)="theme.toggle()">
+      <mat-icon>{{ theme.theme() === 'dark' ? 'light_mode' : 'dark_mode' }}</mat-icon>
+      {{ theme.theme() === 'dark' ? 'Light mode' : 'Dark mode' }}
+    </button>
+    <a mat-menu-item routerLink="/account">
+      <mat-icon>key</mat-icon>
+      Account, password &amp; PIN
+    </a>
+    <button mat-menu-item (click)="signOut()">
+      <mat-icon>logout</mat-icon>
+      Sign out
+    </button>
+  </mat-menu>
+</mat-toolbar>
+
+@if (!sync.serverUp()) {
+  <div class="banner danger" role="alert">
+    <mat-icon>cloud_off</mat-icon>
+    Offline / local mode: the server cannot be reached. Orders go on and wait on this terminal, sent the moment it answers. · وضع محلي
+  </div>
+}
+
+<main class="content">
+  <router-outlet />
+</main>

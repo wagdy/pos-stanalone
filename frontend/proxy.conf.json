@@ -1,0 +1,15 @@
+{
+  "/api": {
+    "target": "http://localhost:5110",
+    "secure": false
+  },
+  "/hubs": {
+    "target": "http://localhost:5110",
+    "secure": false,
+    "ws": true
+  },
+  "/health": {
+    "target": "http://localhost:5110",
+    "secure": false
+  }
+}
