@@ -1,0 +1,24 @@
+# The POS's own development database: PostgreSQL on localhost:5437, database pos_standalone.
+#   docker compose -f dev/docker-compose.yml up -d
+name: pos-standalone-dev
+
+services:
+  db:
+    image: postgres:17-alpine
+    container_name: pos-dev-db
+    environment:
+      POSTGRES_DB: pos_standalone
+      POSTGRES_USER: pos
+      POSTGRES_PASSWORD: pos-dev
+    ports:
+      - "127.0.0.1:5437:5432"
+    volumes:
+      - pos-dev-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pos -d pos_standalone"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+volumes:
+  pos-dev-data:

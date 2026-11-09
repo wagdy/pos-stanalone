@@ -1,0 +1,25 @@
+# Build output
+bin/
+obj/
+node_modules/
+dist/
+.angular/
+
+# The API's copy of the built app
+backend/src/Pos.Api/wwwroot/
+
+# Local settings and secrets
+.env
+*.user
+.vs/
+.idea/
+.DS_Store
+.env.*
+.vscode/
+
+# Database dumps
+dev/backups/
+*.dump
+
+# Exported sheets and print previews made while testing
+*.xlsx

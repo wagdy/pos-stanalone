@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!-- The restaurant's model: the menu and its kitchen stations, the floor, checks and their
+       lines, voids and payments, kitchen tickets, customers, shifts, printers and the links to the
+       other systems. No references: everything else depends on it. -->
+
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
