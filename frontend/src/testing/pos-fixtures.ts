@@ -35,6 +35,7 @@ export function aMenu(overrides: Partial<Menu> = {}): Menu {
     redemptionValuePer100Points: 10,
     cashierDiscountLimitPercent: 10,
     cashierPrintsInBrowser: true,
+    pointsPerCurrencyUnit: 0.1,
     ...overrides,
   };
 }

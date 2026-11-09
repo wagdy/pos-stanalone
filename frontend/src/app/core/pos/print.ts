@@ -3,6 +3,7 @@ import qrcode from 'qrcode-generator';
 import { firstValueFrom } from 'rxjs';
 import { Company } from '../settings/company';
 import { LiveService } from './live.service';
+import { OfflineStore } from './offline';
 import { BrowserPrintJob, Order, PosApi, PosSettings, PrintDocumentKind, Ticket, ZReport, orderTypeLabels, paymentLabels } from './pos.api';
 
 // The till's documents at 80 mm, as the browser prints them: the guest's check before paying and
@@ -78,13 +79,13 @@ export function checkHtml(order: Order, paid: boolean, company: Company, setting
   const pair = (en: string, ar: string, value: string) => `<div class="pair"><span>${en} <span class="ar muted">${ar}</span></span><span>${value}</span></div>`;
   const share = !paid && order.splitWays ? pair(`Each of ${order.splitWays}`, 'لكل فرد', money(Math.ceil((t.total / order.splitWays) * 100) / 100, company)) : '';
   return page(
-    `${paid ? 'Receipt' : 'Check'} #${order.number}`,
+    `${paid ? 'Receipt' : 'Check'} #${order.number || order.id.slice(0, 8)}`,
     `${logo ? `<img class="logo" src="${esc(location.origin + logo)}" alt="">` : ''}
     <div class="c"><h1>${esc(company.name())}</h1>
       ${(settings?.receiptHeader ?? '').split('\n').filter(Boolean).map((l) => `<div class="muted">${esc(l)}</div>`).join('')}
       ${settings?.taxNumber ? `<div class="muted">Tax no. · الرقم الضريبي ${esc(settings.taxNumber)}</div>` : ''}
       <h2>${paid ? 'RECEIPT · فاتورة الدفع' : 'CHECK · شيك الحساب'}</h2></div>
-    <div class="pair"><strong>#${order.number}${order.checkLabel ? ` · Check ${esc(order.checkLabel)}` : ''}</strong><span>${esc(local(order.paidAtUtc ?? new Date().toISOString()))}</span></div>
+    <div class="pair"><strong>${order.number ? `#${order.number}` : `Offline ${esc(order.id.slice(0, 8).toUpperCase())}`}${order.checkLabel ? ` · Check ${esc(order.checkLabel)}` : ''}</strong><span>${esc(local(order.paidAtUtc ?? new Date().toISOString()))}</span></div>
     <div>${type.en} · <span class="ar">${type.ar}</span>${order.tableLabel ? ` — Table ${esc(order.tableLabel)} · ${order.guests} guests` : ''}</div>
     <div class="muted">Captain · الكابتن: ${esc(order.openedBy)}${order.settledBy ? ` &nbsp; Cashier · الكاشير: ${esc(order.settledBy)}` : ''}</div>
     ${order.customer?.name ? `<div class="muted">Customer · العميل: ${esc(order.customer.name)} ${esc(order.customer.phone ?? '')}${order.customer.points != null ? ` · ${order.customer.points} pts` : ''}</div>` : ''}
@@ -195,6 +196,7 @@ export class PrintService {
   private readonly api = inject(PosApi);
   private readonly company = inject(Company);
   private readonly live = inject(LiveService);
+  private readonly offline = inject(OfflineStore);
   private settings: PosSettings | null = null;
 
   readonly station = signal(readStation());
@@ -218,6 +220,13 @@ export class PrintService {
       if (this.station()) {
         void this.printJob(job);
       }
+    });
+    // The check's header and footer fetched now, and again when the settings change, so a check
+    // printed while the server cannot be reached still has them.
+    void this.posSettings();
+    this.live.menuChanged.subscribe(() => {
+      this.settings = null;
+      void this.posSettings();
     });
   }
 
@@ -244,8 +253,7 @@ export class PrintService {
     switch (kind) {
       case 'Bill':
       case 'Receipt':
-        this.settings ??= await firstValueFrom(this.api.settings()).catch(() => null);
-        return checkHtml(await firstValueFrom(this.api.order(subjectId)), kind === 'Receipt', this.company, this.settings, local);
+        return checkHtml(await firstValueFrom(this.api.order(subjectId)), kind === 'Receipt', this.company, await this.posSettings(), local);
       case 'KitchenTicket':
         return ticketHtml(await firstValueFrom(this.api.ticket(subjectId)), stationId, local);
       case 'ZReport':
@@ -253,6 +261,24 @@ export class PrintService {
       default:
         return null;
     }
+  }
+
+  // A check as this terminal has it, printed here: while the server cannot be reached, the guest's
+  // check or paid receipt from the terminal's own copy.
+  async printOrder(order: Order, paid: boolean): Promise<void> {
+    this.print(checkHtml(order, paid, this.company, await this.posSettings(), (utc: string) => this.company.formatLocal(utc)));
+  }
+
+  // The check's header and footer, kept for when the server cannot be asked.
+  private async posSettings(): Promise<PosSettings | null> {
+    if (!this.settings) {
+      try {
+        this.settings = (await this.offline.cached('pos-settings', () => this.api.settings())).value;
+      } catch {
+        return null;
+      }
+    }
+    return this.settings;
   }
 
   // Into a frame of its own, printed, then taken away.

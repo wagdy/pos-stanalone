@@ -6,10 +6,11 @@ import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { Router } from '@angular/router';
 import { firstValueFrom } from 'rxjs';
 import { errorMessage } from '../../../core/http/error-message';
-import { Table, TableCheck, TableState } from '../../../core/pos/pos.api';
+import { AuthService } from '../../../core/auth/auth.service';
+import { Table, TableCheck, TableState, newId } from '../../../core/pos/pos.api';
 import { MoneyPipe } from '../../../core/ui/money.pipe';
 import { NotifyService } from '../../../core/ui/notify.service';
-import { OrderCommands, PosStore } from '../pos-store';
+import { OrderCommands, PosStore, pendingOrder } from '../pos-store';
 import { GuestsData, GuestsDialog } from '../terminal/dialogs';
 
 export const tableStateLabels: Record<TableState, { en: string; ar: string }> = {
@@ -193,15 +194,42 @@ export const tableStateLabels: Record<TableState, { en: string; ar: string }> = 
       &:active {
         transform: scale(0.97);
       }
+      // A round table: its words kept inside the circle, the waiter's name left to the check.
       &.Round {
         justify-self: center;
         width: min(100%, 118px);
         aspect-ratio: 1;
         min-height: 0;
+        gap: 0;
+        padding: 6px;
         border-radius: 50%;
         align-items: center;
         justify-content: center;
         text-align: center;
+        overflow: hidden;
+
+        .label {
+          font-size: 18px;
+        }
+        .total {
+          font-size: 12.5px;
+          white-space: nowrap;
+        }
+        .seats,
+        .meta {
+          font-size: 11px;
+        }
+        .who {
+          display: none;
+        }
+        .drafts {
+          top: 10px;
+          right: 18px;
+        }
+        &.Occupied .seats,
+        &.BillRequested .seats {
+          display: none;
+        }
       }
       .label {
         font-size: 22px;
@@ -264,6 +292,7 @@ export class FloorPage implements OnDestroy {
   private readonly dialog = inject(MatDialog);
   private readonly router = inject(Router);
   private readonly notify = inject(NotifyService);
+  private readonly auth = inject(AuthService);
 
   protected readonly states: TableState[] = ['Available', 'Occupied', 'BillRequested'];
   protected readonly stateLabels = tableStateLabels;
@@ -325,12 +354,14 @@ export class FloorPage implements OnDestroy {
     if (!guests) return;
     this.busy.set(true);
     try {
-      const order = await this.commands.open('DineIn', table.id, guests);
-      if (order) {
-        await this.router.navigate(['/pos/terminal'], { queryParams: { order: order.id } });
-      } else {
-        this.notify.info('The server cannot be reached: the table opens once it answers. · سيتم الفتح عند الاتصال.');
+      const id = newId();
+      const order = await this.commands.open('DineIn', table.id, guests, {}, id);
+      if (!order) {
+        // Waiting for the server: the table is taken here at once, and the terminal goes on with it.
+        this.store.markOpenedOffline(pendingOrder(id, 'DineIn', table.id, table.label, guests, this.auth.me()?.fullName ?? '', this.store.menu()));
+        this.notify.info('The server cannot be reached: the table is opened here and sent once it answers. · سيتم الإرسال عند الاتصال.');
       }
+      await this.router.navigate(['/pos/terminal'], { queryParams: { order: id } });
     } catch (error) {
       this.notify.error(error, errorMessage(error, 'The table could not be opened.'));
     } finally {

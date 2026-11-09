@@ -297,4 +297,35 @@ public class OrderFlowTests
         Assert.Equal(3, _pos.Store.Queue.Items.Count);
         Assert.Equal(shift.Id, (await _pos.Send(new GetCurrentShiftQuery()))!.Id);
     }
+
+    // What a terminal did while the server could not be reached arrives later, as it was done: the
+    // bill it printed in its own browser and the payment it took, printed there too. Kept, never
+    // printed a second time; and every open check is there whole for a terminal to keep.
+    [Fact]
+    public async Task A_bill_and_a_payment_taken_offline_are_kept_when_they_arrive_and_not_printed_again()
+    {
+        await OpenShift();
+        var order = await TableCheck(_t1);
+        await Add(order.Id, _burger, 2, send: true);
+        var other = await TableCheck(_t2);
+        await Add(other.Id, _pizza, 1);
+
+        var open = await _pos.Send(new GetOpenOrderDetailsQuery());
+        Assert.Equal([order.Id, other.Id], open.Select(o => o.Id));
+        Assert.Equal([2, 1], open.Select(o => o.Lines.Single().Quantity));
+        Assert.Equal(OrderStatus.Open, open[0].Status);
+        _pos.Printed.Requests.Clear();
+
+        order = await _pos.Send(new PrintBillCommand(order.Id, TestPos.Cashier, Print: false));
+        Assert.Equal(OrderStatus.BillPrinted, order.Status);
+        var pay = new NewPayment(Guid.NewGuid(), PaymentMethod.Cash, order.Totals.Total, 500, null);
+        order = await _pos.Send(new PayCommand(order.Id, [pay], false, TestPos.Cashier));
+        Assert.Equal(OrderStatus.Paid, order.Status);
+        Assert.Empty(_pos.Printed.Requests);
+
+        // Sent again (the answer was lost): the same payment, taken once.
+        order = await _pos.Send(new PayCommand(order.Id, [pay], false, TestPos.Cashier));
+        Assert.Single(order.Payments);
+        Assert.Equal([other.Id], (await _pos.Send(new GetOpenOrderDetailsQuery())).Select(o => o.Id));
+    }
 }

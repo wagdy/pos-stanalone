@@ -13,8 +13,11 @@ import {
   OrderType,
   PosApi,
   StockOutcome,
+  Table,
   newId,
 } from '../../core/pos/pos.api';
+
+const OpenOrdersKey = 'open-orders';
 
 // What the till's screens share: the menu and the floor (kept in this browser too, so they open
 // while the server cannot be reached) and the open checks, each reloaded the moment the server says
@@ -78,9 +81,77 @@ export class PosStore {
   async loadOpen(): Promise<void> {
     try {
       this.open.set(await firstValueFrom(this.api.openOrders()));
+      this.snapshotSoon();
     } catch {
       // Kept as they were.
     }
+  }
+
+  // ---- The terminal's copy of every open check, whole, for when the server cannot be reached ----
+
+  private snapshotTimer: ReturnType<typeof setTimeout> | null = null;
+
+  // A moment after the checks change (many changes at once make one request): all of them, kept.
+  private snapshotSoon(): void {
+    if (this.snapshotTimer) clearTimeout(this.snapshotTimer);
+    this.snapshotTimer = setTimeout(() => {
+      this.snapshotTimer = null;
+      firstValueFrom(this.api.openOrdersFull())
+        .then((orders) => this.offline.write(OpenOrdersKey, orders))
+        .catch(() => undefined);
+    }, 1500);
+  }
+
+  // A check as this terminal last had it.
+  async cachedOrder(id: string): Promise<Order | null> {
+    const kept = (await this.offline.read<Order[]>(OpenOrdersKey)) ?? [];
+    return kept.find((o) => o.id === id) ?? null;
+  }
+
+  // The check as a command just answered it, kept in the copy (or taken out of it once closed).
+  async keep(order: Order): Promise<void> {
+    const kept = ((await this.offline.read<Order[]>(OpenOrdersKey)) ?? []).filter((o) => o.id !== order.id);
+    const closed = order.status === 'Paid' || order.status === 'Cancelled' || order.status === 'Merged';
+    await this.offline.write(OpenOrdersKey, closed ? kept : [...kept, order]);
+  }
+
+  // ---- What this terminal did while the server could not be reached, on the floor at once ----
+
+  // A table opened here: taken on this terminal's floor until the server says how it is.
+  markOpenedOffline(order: Order): void {
+    if (!order.tableId) return;
+    this.updateFloor((t) =>
+      t.id === order.tableId
+        ? {
+            ...t,
+            state: 'Occupied',
+            checks: [
+              ...t.checks,
+              { orderId: order.id, number: 0, checkLabel: null, status: 'Open', total: 0, guests: order.guests, openedBy: order.openedBy, openedAtUtc: order.openedAtUtc, hasDrafts: true },
+            ],
+          }
+        : t,
+    );
+  }
+
+  // A check paid here: off the open checks and its table free, on this terminal, until the server
+  // has the payment and says so itself.
+  settledOffline(order: Order): void {
+    this.open.update((all) => all.filter((o) => o.id !== order.id));
+    this.updateFloor((t) => {
+      if (!t.checks.some((c) => c.orderId === order.id)) return t;
+      const checks = t.checks.filter((c) => c.orderId !== order.id);
+      return { ...t, checks, state: checks.length ? t.state : 'Available' };
+    });
+    void this.keep({ ...order, status: 'Paid' });
+  }
+
+  private updateFloor(change: (table: Table) => Table): void {
+    const floor = this.floor();
+    if (!floor) return;
+    const next = { ...floor, tables: floor.tables.map(change) };
+    this.floor.set(next);
+    void this.offline.write('floor', next);
   }
 
   item(id: string): MenuItem | undefined {
@@ -90,12 +161,21 @@ export class PosStore {
 
 // A check opened while the server could not be reached: the terminal works on it by its id (the
 // server takes it with that id once it answers); what is put on it shows as waiting until then.
-export function pendingOrder(id: string, type: OrderType, tableId: string | null, tableLabel: string | null, guests: number, openedBy: string): Order {
-  const now = new Date().toISOString();
+export function pendingOrder(
+  id: string,
+  type: OrderType,
+  tableId: string | null,
+  tableLabel: string | null,
+  guests: number,
+  openedBy: string,
+  menu: Menu | null,
+  openedAtUtc = new Date().toISOString(),
+): Order {
+  const now = openedAtUtc;
   return {
     id, number: 0, businessDate: now.slice(0, 10), type, status: 'Open', tableId, tableLabel, checkLabel: null, guests, splitFromId: null,
     mergedIntoId: null, splitWays: null, openedBy, openedAtUtc: now, notes: null, customer: null, deliveryAddress: null, driverName: null,
-    servicePercent: 0, taxPercent: 0, discountAmount: 0, discountReason: null, pointsRedeemed: 0, pointsEarned: 0, billPrints: 0,
+    servicePercent: type === 'DineIn' ? (menu?.servicePercent ?? 0) : 0, taxPercent: menu?.taxPercent ?? 0, discountAmount: 0, discountReason: null, pointsRedeemed: 0, pointsEarned: 0, billPrints: 0,
     billPrintedAtUtc: null, paidAtUtc: null, settledBy: null, shiftId: null,
     totals: { gross: 0, lineDiscounts: 0, billDiscount: 0, redemption: 0, net: 0, service: 0, tax: 0, total: 0, paid: 0, due: 0 },
     lines: [], voids: [], payments: [], tickets: [],
@@ -163,17 +243,26 @@ export class OrderCommands {
     });
   }
 
+  // Kept to send later, it asks the server for no receipt: this terminal printed it already.
   pay(order: Pick<Order, 'id' | 'number'>, payments: NewPayment[], printReceipt: boolean) {
     return this.offline.send<Order>({
       method: 'POST',
       url: `/api/orders/${order.id}/pay`,
       body: { payments, printReceipt },
+      bodyIfQueued: { payments, printReceipt: false },
       label: `${checkName(order)}: paid`,
       orderId: order.id,
     });
   }
 
   bill(order: Pick<Order, 'id' | 'number'>) {
-    return this.offline.send<Order>({ method: 'POST', url: `/api/orders/${order.id}/bill`, body: {}, label: `${checkName(order)}: bill printed`, orderId: order.id });
+    return this.offline.send<Order>({
+      method: 'POST',
+      url: `/api/orders/${order.id}/bill`,
+      body: { print: true },
+      bodyIfQueued: { print: false },
+      label: `${checkName(order)}: bill printed`,
+      orderId: order.id,
+    });
   }
 }

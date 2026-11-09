@@ -47,6 +47,21 @@ internal sealed class GetOpenOrdersHandler(IOrderRepository orders) : IRequestHa
         (await orders.GetOpenAsync(cancellationToken)).OrderBy(o => o.OpenedAtUtc).Select(OrderMapping.Summary).ToList();
 }
 
+// Every check not closed, whole, the oldest first: what a terminal keeps so it can go on with them
+// (and settle them) while the server cannot be reached.
+public sealed record GetOpenOrderDetailsQuery : IRequest<IReadOnlyList<OrderDto>>;
+
+internal sealed class GetOpenOrderDetailsHandler(IOrderRepository orders, OrderReader reader) : IRequestHandler<GetOpenOrderDetailsQuery, IReadOnlyList<OrderDto>>
+{
+    public async Task<IReadOnlyList<OrderDto>> Handle(GetOpenOrderDetailsQuery request, CancellationToken cancellationToken)
+    {
+        var dtos = new List<OrderDto>();
+        foreach (var order in (await orders.GetOpenAsync(cancellationToken)).OrderBy(o => o.OpenedAtUtc))
+            dtos.Add(await reader.DtoAsync(order, cancellationToken));
+        return dtos;
+    }
+}
+
 // A business day's checks, the latest first: the receipts.
 public sealed record GetDayOrdersQuery(DateOnly Date) : IRequest<IReadOnlyList<OrderSummaryDto>>;
 
@@ -256,7 +271,9 @@ internal sealed class VoidItemsHandler(OrderDesk desk, ManagerAuthority authorit
 }
 
 // The guest's bill (طباعة الشيك): printed on the cashier's printer; the table waits to pay.
-public sealed record PrintBillCommand(Guid OrderId, Actor By) : IRequest<OrderDto>;
+// Print false: the check was printed already, in the terminal's own browser while the server could
+// not be reached, and only the state (Bill printed) is to be kept now.
+public sealed record PrintBillCommand(Guid OrderId, Actor By, bool Print = true) : IRequest<OrderDto>;
 
 internal sealed class PrintBillHandler(OrderDesk desk) : IRequestHandler<PrintBillCommand, OrderDto>
 {
@@ -266,7 +283,7 @@ internal sealed class PrintBillHandler(OrderDesk desk) : IRequestHandler<PrintBi
         if (order.HasDrafts)
             throw new DomainException("Send the new items to the kitchen first. · أرسل الأصناف الجديدة أولاً.");
         order.PrintBill(DateTime.UtcNow);
-        return await desk.DoneAsync(order, cancellationToken, [new PrintRequest(PrintDocumentKind.Bill, order.Id)]);
+        return await desk.DoneAsync(order, cancellationToken, request.Print ? [new PrintRequest(PrintDocumentKind.Bill, order.Id)] : null);
     }
 }
 

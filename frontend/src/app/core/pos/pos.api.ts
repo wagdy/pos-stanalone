@@ -100,6 +100,8 @@ export interface Menu {
   cashierDiscountLimitPercent: number;
   // No network printer for the cashier: the terminal's browser prints the checks and receipts.
   cashierPrintsInBrowser: boolean;
+  // Points earned per unit of money paid, for a receipt printed while the server cannot be reached.
+  pointsPerCurrencyUnit: number;
 }
 
 export interface TableCheck {
@@ -496,6 +498,11 @@ export class PosApi {
     return this.http.get<OrderSummary[]>('/api/orders/open');
   }
 
+  // Every open check whole: the terminal's copy for when the server cannot be reached.
+  openOrdersFull(): Observable<Order[]> {
+    return this.http.get<Order[]>('/api/orders/open/full');
+  }
+
   dayOrders(date: string): Observable<OrderSummary[]> {
     return this.http.get<OrderSummary[]>('/api/orders', { params: { date } });
   }
@@ -524,8 +531,8 @@ export class PosApi {
     return this.http.post<Order>(`/api/orders/${orderId}/voids`, body);
   }
 
-  printBill(orderId: string): Observable<Order> {
-    return this.http.post<Order>(`/api/orders/${orderId}/bill`, {});
+  printBill(orderId: string, print = true): Observable<Order> {
+    return this.http.post<Order>(`/api/orders/${orderId}/bill`, { print });
   }
 
   update(orderId: string, body: { guests: number | null; notes: string | null; deliveryAddress: string | null; driverName: string | null; customerName: string | null; customerPhone: string | null }): Observable<Order> {

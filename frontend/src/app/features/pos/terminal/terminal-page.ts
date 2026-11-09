@@ -16,12 +16,14 @@ import { AuthService } from '../../../core/auth/auth.service';
 import { Permissions } from '../../../core/auth/permissions';
 import { errorMessage } from '../../../core/http/error-message';
 import { LiveService } from '../../../core/pos/live.service';
-import { OfflineStore } from '../../../core/pos/offline';
+import { OfflineStore, QueuedCommand, isUnreachable } from '../../../core/pos/offline';
+import { projectOrder } from '../../../core/pos/projection';
 import {
   MenuItem,
   NewLine,
   Order,
   OrderLine,
+  OrderSummary,
   OrderType,
   PosApi,
   Shift,
@@ -89,7 +91,9 @@ export class TerminalPage implements OnInit {
   protected readonly statusLabels = lineStatusLabels;
   protected readonly types: OrderType[] = ['DineIn', 'Takeaway', 'Delivery'];
 
-  protected readonly current = signal<Order | null>(null);
+  // The check as the server last answered it (or as kept here); what is shown is it with this
+  // terminal's waiting commands applied (current).
+  private readonly base = signal<Order | null>(null);
   protected readonly loading = signal(false);
   protected readonly busy = signal(false);
   protected readonly category = signal<string | null>(null);
@@ -120,23 +124,40 @@ export class TerminalPage implements OnInit {
 
   // The open checks, by how they are served.
   protected readonly openByType = computed(() => {
-    const open = this.store.open();
+    const open = [...this.store.open(), ...this.pendingChecks()];
     return this.types.map((type) => ({ type, checks: open.filter((o) => o.type === type) }));
   });
 
   // What this terminal did on the check that waits to reach the server.
   protected readonly waiting = computed(() => {
-    const order = this.current();
+    const order = this.base();
     if (!order) return [];
     return this.offline.queue().filter((c) => c.orderId === order.id && !c.failed);
   });
-  protected readonly waitingLines = computed(() =>
-    this.waiting().flatMap((c) =>
-      ((c.body as { items?: NewLine[] } | null)?.items ?? [])
-        .filter((l) => 'menuItemId' in l)
-        .map((l) => ({ id: l.lineId, name: this.store.item(l.menuItemId)?.name ?? 'Item', quantity: l.quantity })),
-    ),
-  );
+  // The check with what waits applied: its lines, totals and state as the server will have them.
+  private readonly view = computed(() => projectOrder(this.base(), this.waiting(), this.store.menu(), this.auth.me()?.fullName ?? ''));
+  protected readonly current = computed(() => this.view()?.order ?? null);
+  protected readonly waitingLineIds = computed(() => this.view()?.waitingLineIds ?? new Set<string>());
+  protected readonly waitingCount = computed(() => this.view()?.waiting ?? 0);
+
+  // Checks opened here while the server could not be reached, not yet paid: listed with the rest.
+  private readonly pendingChecks = computed<OrderSummary[]>(() => {
+    const known = new Set(this.store.open().map((o) => o.id));
+    const queue = this.offline.queue().filter((c) => !c.failed);
+    return queue
+      .filter((c) => isOpening(c) && c.orderId && !known.has(c.orderId))
+      .map((c) => {
+        const base = this.pendingBase(c);
+        const order = projectOrder(base, queue.filter((q) => q.orderId === c.orderId), this.store.menu(), base.openedBy)!.order;
+        return order;
+      })
+      .filter((o) => o.status !== 'Paid')
+      .map((o) => ({
+        id: o.id, number: 0, type: o.type, status: o.status, tableLabel: o.tableLabel, checkLabel: null, guests: o.guests, openedBy: o.openedBy,
+        openedAtUtc: o.openedAtUtc, customerName: null, total: o.totals.total, due: o.totals.due,
+        items: o.lines.reduce((n, l) => n + l.quantity, 0), hasDrafts: o.lines.some((l) => l.status === 'Draft'), paidAtUtc: null,
+      }));
+  });
 
   protected readonly drafts = computed(() => this.current()?.lines.filter((l) => l.status === 'Draft' && l.quantity > 0) ?? []);
   protected readonly liveLines = computed(() => this.current()?.lines.filter((l) => l.quantity > 0) ?? []);
@@ -149,7 +170,7 @@ export class TerminalPage implements OnInit {
 
   constructor() {
     this.live.ordersChanged.pipe(takeUntilDestroyed()).subscribe((ids) => {
-      const order = this.current();
+      const order = this.base();
       if (order && ids.includes(order.id)) void this.reload(order.id, false);
     });
     this.live.shiftChanged.pipe(takeUntilDestroyed()).subscribe(() => void this.loadShift());
@@ -231,11 +252,20 @@ export class TerminalPage implements OnInit {
     const opened = await this.run(() => this.commands.open(type, tableId, guests, {}, id), 'The check could not be opened.');
     if (opened) return opened;
     if (this.offline.forOrder(id).length) {
-      const waiting = pendingOrder(id, type, tableId, tableLabel, guests, this.auth.me()?.fullName ?? '');
-      this.current.set(waiting);
+      const waiting = pendingOrder(id, type, tableId, tableLabel, guests, this.auth.me()?.fullName ?? '', this.store.menu());
+      this.base.set(waiting);
+      this.store.markOpenedOffline(waiting);
       return waiting;
     }
     return null;
+  }
+
+  // A check opened here while the server could not be reached, from the command that opened it.
+  private pendingBase(opening: QueuedCommand): Order {
+    const body = opening.body as { orderId: string; type: OrderType; tableId: string | null; guests: number };
+    const table = this.store.floor()?.tables.find((t) => t.id === body.tableId);
+    return pendingOrder(body.orderId, body.type, body.tableId, table?.label ?? null, body.guests, this.auth.me()?.fullName ?? '', this.store.menu(),
+      opening.createdAt);
   }
 
   protected async addItem(item: MenuItem): Promise<void> {
@@ -283,7 +313,7 @@ export class TerminalPage implements OnInit {
 
   protected async send(): Promise<void> {
     const order = this.current();
-    if (!order || (!this.drafts().length && !this.waitingLines().length)) return;
+    if (!order || !this.drafts().length) return;
     const sent = await this.run(() => this.commands.send(order), 'The order could not be sent to the kitchen.');
     if (sent?.tickets.length) this.notify.info(`Sent to the kitchen on KOT ${sent.tickets.at(-1)?.number}. · أُرسل للمطبخ.`);
   }
@@ -296,7 +326,12 @@ export class TerminalPage implements OnInit {
       return;
     }
     const billed = await this.run(() => this.commands.bill(order), 'The bill could not be printed.');
-    if (billed) await this.printer.printedHere('Bill', billed.id, this.store.menu()?.cashierPrintsInBrowser ?? true);
+    if (billed) {
+      await this.printer.printedHere('Bill', billed.id, this.store.menu()?.cashierPrintsInBrowser ?? true);
+    } else if (this.current()?.status === 'BillPrinted') {
+      // Waiting for the server: printed here, from the check as this terminal has it.
+      await this.printer.printOrder(this.current()!, false);
+    }
   }
 
   protected async pay(): Promise<void> {
@@ -315,6 +350,16 @@ export class TerminalPage implements OnInit {
       const change = paid.payments.reduce((n, p) => n + p.change, 0);
       this.notify.info(`Paid${change ? `: change ${this.company.money(change)}` : ''}. · تم الدفع.`);
       if (choice.printReceipt) await this.printer.printedHere('Receipt', paid.id, this.store.menu()?.cashierPrintsInBrowser ?? true);
+      return;
+    }
+    // Waiting for the server: settled here all the same. The receipt prints from this terminal's
+    // copy, the table is free, and the payment goes to the server (with the rest) once it answers.
+    const settled = paid ? null : this.current();
+    if (settled?.status === 'Paid') {
+      if (choice.printReceipt) await this.printer.printOrder(settled, true);
+      this.store.settledOffline(settled);
+      const change = settled.payments.reduce((n, p) => n + p.change, 0);
+      this.notify.info(`Paid offline${change ? `: change ${this.company.money(change)}` : ''}. It reaches the server once it answers. · تم الدفع (وضع محلي).`);
     }
   }
 
@@ -351,7 +396,7 @@ export class TerminalPage implements OnInit {
     }
     const result = await this.direct(() => this.api.split(order.id, newId(), choice.moves), 'The check could not be split.', false);
     if (result) {
-      this.current.set(result.created);
+      this.base.set(result.created);
       this.notify.info(`Check ${result.created.checkLabel} opened with what moved. · تم فصل الشيك.`);
     }
   }
@@ -368,7 +413,7 @@ export class TerminalPage implements OnInit {
     if (!pick) return;
     const moved = await this.direct(() => this.api.transfer(order.tableId!, pick.table.id), 'The table could not be moved.', false);
     if (moved) {
-      this.current.set(moved.find((o) => o.id === order.id) ?? moved[0]);
+      this.base.set(moved.find((o) => o.id === order.id) ?? moved[0]);
       this.notify.info(`Moved to table ${pick.table.label}: the kitchen was told. · تم النقل.`);
     }
   }
@@ -386,7 +431,7 @@ export class TerminalPage implements OnInit {
     if (!target) return;
     const merged = await this.direct(() => this.api.merge(target.orderId, order.id), 'The tables could not be merged.', false);
     if (merged) {
-      this.current.set(merged);
+      this.base.set(merged);
       this.notify.info(`Merged into table ${pick!.table.label}. · تم الدمج.`);
     }
   }
@@ -473,11 +518,21 @@ export class TerminalPage implements OnInit {
     const order = this.current();
     if (!order) return;
     const kind = order.status === 'Paid' ? 'Receipt' : 'Bill';
+    // Waiting for the server: printed here from this terminal's copy.
+    if (this.waitingCount()) {
+      await this.printer.printOrder(order, kind === 'Receipt');
+      return;
+    }
     await this.direct(async () => {
       await firstValueFrom(this.api.print(kind, order.id));
       await this.printer.printedHere(kind, order.id, this.store.menu()?.cashierPrintsInBrowser ?? true);
       return order;
     }, 'It could not be printed.', false);
+  }
+
+  protected next(): void {
+    this.base.set(null);
+    this.selectedLine.set(null);
   }
 
   protected newCheckFromFloor(): void {
@@ -497,17 +552,32 @@ export class TerminalPage implements OnInit {
     this.loading.set(true);
     try {
       const order = await firstValueFrom(this.api.order(id));
-      if (chosen || this.current()?.id === id) this.current.set(order);
+      if (chosen || this.base()?.id === id) this.base.set(order);
+      void this.store.keep(order);
     } catch (error) {
-      this.notify.error(error, 'The check could not be loaded.');
+      // The server cannot be reached: the check as this terminal last had it, or as it was opened here.
+      const kept = isUnreachable(error) ? await this.keptCheck(id) : null;
+      if (kept) {
+        if (chosen || this.base()?.id === id) this.base.set(kept);
+      } else {
+        this.notify.error(error, 'The check could not be loaded.');
+      }
     } finally {
       this.loading.set(false);
     }
   }
 
+  private async keptCheck(id: string): Promise<Order | null> {
+    const kept = await this.store.cachedOrder(id);
+    if (kept) return kept;
+    const opening = this.offline.queue().find((c) => c.orderId === id && isOpening(c));
+    return opening ? this.pendingBase(opening) : null;
+  }
+
+  // Kept too: while the server cannot be reached the shift is the one last seen open.
   private async loadShift(): Promise<void> {
     try {
-      this.shift.set(await firstValueFrom(this.api.currentShift()));
+      this.shift.set((await this.offline.cached('shift', () => this.api.currentShift())).value);
     } catch {
       this.shift.set(undefined);
     }
@@ -520,7 +590,8 @@ export class TerminalPage implements OnInit {
     try {
       const order = await call();
       if (order) {
-        this.current.set(order);
+        this.base.set(order);
+        void this.store.keep(order);
       } else {
         this.notify.info('The server cannot be reached: it waits on this terminal and is sent once it can. · سيتم الإرسال عند الاتصال.');
       }
@@ -539,7 +610,10 @@ export class TerminalPage implements OnInit {
     try {
       const result = call();
       const value = isObservable(result) ? await firstValueFrom(result) : await result;
-      if (setOrder && value && (value as unknown as Order).lines) this.current.set(value as unknown as Order);
+      if (setOrder && value && (value as unknown as Order).lines) {
+        this.base.set(value as unknown as Order);
+        void this.store.keep(value as unknown as Order);
+      }
       return value;
     } catch (error) {
       this.notify.error(error, errorMessage(error, failed));
@@ -548,4 +622,9 @@ export class TerminalPage implements OnInit {
       this.busy.set(false);
     }
   }
+}
+
+// The command that opened a check (POST /api/orders).
+function isOpening(command: QueuedCommand): boolean {
+  return command.method === 'POST' && command.url === '/api/orders';
 }

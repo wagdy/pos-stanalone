@@ -42,7 +42,10 @@ public sealed record MenuDto(
     decimal RedemptionValuePer100Points,
     decimal CashierDiscountLimitPercent,
     // The cashier's documents print in the terminal's browser: there is no network cashier printer.
-    bool CashierPrintsInBrowser);
+    bool CashierPrintsInBrowser,
+    // Points earned for each unit of money paid: a receipt printed while the server cannot be
+    // reached shows what the server will credit.
+    decimal PointsPerCurrencyUnit = 0);
 
 public sealed record GetMenuQuery : IRequest<MenuDto>;
 
@@ -65,7 +68,7 @@ internal sealed class GetMenuHandler(
                     s.PrinterId is { } q ? byId.GetValueOrDefault(q)?.Connection : null))
                 .ToList(),
             pos.QuickNotes, pos.VoidReasons, pos.TaxPercent, pos.ServicePercent, pos.RedemptionValuePer100Points, pos.CashierDiscountLimitPercent,
-            cashier is null || cashier.Connection == PrinterConnection.Browser);
+            cashier is null || cashier.Connection == PrinterConnection.Browser, pos.PointsPerCurrencyUnit);
     }
 }
 

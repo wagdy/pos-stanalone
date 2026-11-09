@@ -104,15 +104,38 @@ customer on the check.
 
 ## Offline first
 
-- **The terminal**: the menu and floor are kept in IndexedDB; every command carries ids made in
-  the browser, so a command sent twice changes nothing the second time. When the server cannot be
-  reached, commands wait in the terminal's outbox and are sent in order once it answers; a check
-  opened meanwhile is worked on as "Waiting to sync". A void with a manager's PIN is never kept.
-- **The server**: what the linked systems are owed waits in its own outbox (`pos.SyncItems`),
-  each item's id a UUIDv5 of the system, kind and subject; tried again from 15 seconds, doubling
-  to 10 minutes.
+The POS runs on the restaurant's own machine; the terminals, captains and kitchen screens reach it
+over the restaurant's network. When a terminal cannot reach it (the network, or the server
+restarting), the terminal goes on:
+
+- **What it keeps:** the menu, the floor, the POS settings, the open shift and **every open check
+  in full** (`GET /api/orders/open/full`, refreshed a moment after any check changes) in
+  IndexedDB.
+- **What it queues:** every command carries ids made in the browser (the check's, each line's,
+  each payment's), so a command sent twice changes nothing the second time. While the server
+  cannot be reached, commands wait in the terminal's outbox and are sent in order once it answers.
+  A void with a manager's PIN is never kept.
+- **The check as it will be:** the terminal applies what waits to the check as last seen (items
+  priced from the menu, changes, voids, the send, the bill, payments) and works its totals out as
+  the server does (the same rounding). Lines done offline are marked "Waiting to sync".
+- **Settling offline (الدفع في وضع الأوفلاين):** any open check, including one a captain opened, can
+  have its check printed (F8) and be paid (F9) in cash, by card, wallet or as a staff meal. The
+  check or receipt prints in this browser from the terminal's copy, the table is freed on the floor
+  at once, and the bill and payment are queued **without** asking the server to print them again.
+  A table can also be opened from the floor plan while offline.
+- **On reconnect:** the outbox replays by itself. The server takes the same commands by the same
+  ids and comes to the same totals; the payment lands in the open shift, and `order.paid` (points
+  earned and redeemed) goes into the server's own sync queue for the loyalty system.
+- **What needs the server:** splitting, moving and merging tables, discounts, redeeming points,
+  the shift's open/close, and the kitchen screen and network printers (they are driven by the
+  server). If a captain added to a check on the server meanwhile, a payment taken offline for the
+  old total lands as a part payment and the check stays open for the rest.
+- **The server's own outbox:** what the linked systems are owed waits in `pos.SyncQueue`, each
+  item's id a UUIDv5 of the system, kind and subject; tried again from 15 seconds, doubling to 10
+  minutes.
 - **The sync light** in the top bar: "Online · All synced", or "Offline / Local mode · n pending
-  sync"; it opens the sync drawer with every waiting item and **Sync now (مزامنة الآن)**.
+  sync"; it opens the sync drawer with every waiting item, Retry and Discard for refused ones, and
+  **Sync now (مزامنة الآن)**.
 
 ## Integration Hub
 

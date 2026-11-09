@@ -3,7 +3,9 @@ import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { Router, provideRouter } from '@angular/router';
 import { of } from 'rxjs';
+import { AuthService } from '../../../core/auth/auth.service';
 import { NotifyService } from '../../../core/ui/notify.service';
+import { cashierMe } from '../../../../testing/fixtures';
 import { aFloor, aTable, anOrder } from '../../../../testing/pos-fixtures';
 import { OrderCommands, PosStore } from '../pos-store';
 import { FloorPage } from './floor-page';
@@ -12,6 +14,7 @@ const text = (el: Element) => el.textContent!.replace(/\s+/g, ' ').trim();
 
 describe('the floor plan', () => {
   const commands = { open: vi.fn() };
+  const markOpenedOffline = vi.fn();
   const open = vi.fn();
   const check = (orderId: string, checkLabel: string | null, total: number) => ({
     orderId, number: 20, checkLabel, status: 'Open' as const, total, guests: 2, openedBy: 'Karim', openedAtUtc: new Date().toISOString(), hasDrafts: false,
@@ -27,7 +30,8 @@ describe('the floor plan', () => {
     TestBed.configureTestingModule({
       providers: [
         provideRouter([]),
-        { provide: PosStore, useValue: { floor: signal(floor), start: vi.fn() } },
+        { provide: PosStore, useValue: { floor: signal(floor), menu: signal(null), start: vi.fn(), markOpenedOffline } },
+        { provide: AuthService, useValue: { me: () => cashierMe } },
         { provide: OrderCommands, useValue: commands },
         { provide: MatDialog, useValue: { open } },
         { provide: NotifyService, useValue: { info: vi.fn(), error: vi.fn() } },
@@ -46,6 +50,7 @@ describe('the floor plan', () => {
 
   beforeEach(() => {
     commands.open.mockReset();
+    markOpenedOffline.mockReset();
     open.mockReset();
   });
 
@@ -88,7 +93,22 @@ describe('the floor plan', () => {
     el.querySelector<HTMLButtonElement>('.table')!.click();
     await settle();
 
-    expect(commands.open).toHaveBeenCalledWith('DineIn', 'table-1', 4);
-    expect(navigate).toHaveBeenCalledWith(['/pos/terminal'], { queryParams: { order: 'order-new' } });
+    expect(commands.open.mock.lastCall!.slice(0, 3)).toEqual(['DineIn', 'table-1', 4]);
+    const id = commands.open.mock.lastCall![4];
+    expect(navigate).toHaveBeenCalledWith(['/pos/terminal'], { queryParams: { order: id } });
+    expect(markOpenedOffline).not.toHaveBeenCalled();
+  });
+
+  it('opens a table while the server cannot be reached: taken here at once, and on to the terminal', async () => {
+    open.mockReturnValue({ afterClosed: () => of(2) });
+    commands.open.mockResolvedValue(null);
+    const { el, navigate, settle } = await render();
+
+    el.querySelector<HTMLButtonElement>('.table')!.click();
+    await settle();
+
+    const id = commands.open.mock.lastCall![4];
+    expect(markOpenedOffline).toHaveBeenCalledWith(expect.objectContaining({ id, tableId: 'table-1', tableLabel: '1', guests: 2, number: 0 }));
+    expect(navigate).toHaveBeenCalledWith(['/pos/terminal'], { queryParams: { order: id } });
   });
 });

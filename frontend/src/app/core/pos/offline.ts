@@ -111,7 +111,12 @@ export class OfflineStore {
 
   // Sent now; when the server cannot be reached, queued to be sent once it can. The answer, or
   // null when it was queued.
-  async send<T>(command: Omit<QueuedCommand, 'id' | 'createdAt' | 'attempts' | 'lastError' | 'failed'> & { id?: string }): Promise<T | null> {
+  //
+  // bodyIfQueued: what to send instead when it has to wait: a payment or a bill printed here in the
+  // meantime is sent later without asking the server to print it again.
+  async send<T>(
+    command: Omit<QueuedCommand, 'id' | 'createdAt' | 'attempts' | 'lastError' | 'failed'> & { id?: string; bodyIfQueued?: unknown },
+  ): Promise<T | null> {
     // What was queued before goes first: the server takes them in order.
     if (this.pending() > 0) {
       await this.flush();
@@ -125,8 +130,10 @@ export class OfflineStore {
         }
       }
     }
+    const { bodyIfQueued, ...rest } = command;
     const queued: QueuedCommand = {
-      ...command,
+      ...rest,
+      body: bodyIfQueued ?? command.body,
       id: command.id ?? crypto.randomUUID(),
       createdAt: new Date().toISOString(),
       attempts: 0,

@@ -135,7 +135,8 @@
 
       <ul class="lines" aria-label="Items on the check">
         @for (l of liveLines(); track l.id) {
-          <li class="line" [class]="l.status" [class.on]="selectedLine() === l.id" (click)="selectedLine.set(selectedLine() === l.id ? null : l.id)">
+          <li class="line" [class]="l.status" [class.waiting]="waitingLineIds().has(l.id)" [class.on]="selectedLine() === l.id"
+            (click)="selectedLine.set(selectedLine() === l.id ? null : l.id)">
             <span class="qty">{{ l.quantity }}×</span>
             <span class="name">
               <strong>{{ l.name }}</strong>{{ l.sizeName ? ' (' + l.sizeName + ')' : '' }}
@@ -148,6 +149,9 @@
             </span>
             <span class="state" [attr.aria-label]="statusLabels[l.status].en">
               {{ statusLabels[l.status].en }}{{ l.kitchenTicketNumber ? ' · KOT ' + l.kitchenTicketNumber : '' }}
+              @if (waitingLineIds().has(l.id)) {
+                · Waiting to sync · بانتظار المزامنة
+              }
             </span>
             <span class="total">{{ l.total | money }}</span>
             @if (selectedLine() === l.id && !closed()) {
@@ -162,11 +166,7 @@
             }
           </li>
         }
-        @for (w of waitingLines(); track w.id) {
-          <li class="line waiting"><span class="qty">{{ w.quantity }}×</span><span class="name"><strong>{{ w.name }}</strong></span>
-            <span class="state">Waiting to sync · بانتظار المزامنة</span></li>
-        }
-        @if (!liveLines().length && !waitingLines().length) {
+        @if (!liveLines().length) {
           <li class="muted empty">Tap items on the menu to add them. · اضغط على الأصناف لإضافتها.</li>
         }
       </ul>
@@ -205,7 +205,7 @@
 
       @if (!closed()) {
         <div class="actions">
-          <button mat-flat-button class="send" (click)="send()" [disabled]="busy() || (!drafts().length && !waitingLines().length)">
+          <button mat-flat-button class="send" (click)="send()" [disabled]="busy() || !drafts().length">
             <mat-icon>soup_kitchen</mat-icon> Send to kitchen <span class="ar">إرسال للمطبخ</span> <kbd>F4</kbd>
           </button>
           <button mat-stroked-button (click)="printBill()" [disabled]="busy() || !liveLines().length"><mat-icon>receipt</mat-icon> Print check <span class="ar">طباعة الشيك</span> <kbd>F8</kbd></button>
@@ -233,8 +233,11 @@
           @if (o.pointsEarned) {
             <span class="tag info">+{{ o.pointsEarned }} points · نقطة</span>
           }
+          @if (waitingCount()) {
+            <span class="tag warn">Waiting to sync · بانتظار المزامنة</span>
+          }
           <button mat-stroked-button (click)="reprint()"><mat-icon>print</mat-icon> Reprint receipt · إعادة طباعة</button>
-          <button mat-flat-button (click)="current.set(null)"><mat-icon>add</mat-icon> Next · التالي</button>
+          <button mat-flat-button (click)="next()"><mat-icon>add</mat-icon> Next · التالي</button>
         </div>
       }
     } @else {

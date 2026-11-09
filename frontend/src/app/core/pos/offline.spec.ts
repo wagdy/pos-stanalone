@@ -86,6 +86,24 @@ describe('the terminal’s outbox', () => {
     expect(store.queue()).toEqual([]);
   });
 
+  it('keeps a payment taken while waiting without asking the server to print its receipt again', async () => {
+    const pay = { ...command(1), url: '/api/orders/o/pay', body: { payments: [], printReceipt: true }, bodyIfQueued: { payments: [], printReceipt: false } };
+    const sent = store.send(pay);
+    await tick();
+    http.expectOne('/api/orders/o/pay').flush(null, { status: 0, statusText: '' });
+    expect(await sent).toBeNull();
+    expect(store.queue()[0].body).toEqual({ payments: [], printReceipt: false });
+    expect('bodyIfQueued' in store.queue()[0]).toBe(false);
+
+    // Sent later, as it was kept.
+    const flushed = store.flush();
+    await tick();
+    const later = http.expectOne('/api/orders/o/pay');
+    expect(later.request.body).toEqual({ payments: [], printReceipt: false });
+    later.flush({});
+    expect(await flushed).toBe(1);
+  });
+
   it('gives back what it kept when the server cannot be reached, said to be stale', async () => {
     expect(await store.cached('menu', () => of({ items: 3 }))).toEqual({ value: { items: 3 }, stale: false });
     const down = () => throwError(() => new HttpErrorResponse({ status: 0 }));

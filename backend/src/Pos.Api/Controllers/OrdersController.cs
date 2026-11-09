@@ -23,6 +23,11 @@ public sealed class OrdersController(ISender sender) : ControllerBase
     [HttpGet("open")]
     public Task<IReadOnlyList<OrderSummaryDto>> GetOpen(CancellationToken cancellationToken) => sender.Send(new GetOpenOrdersQuery(), cancellationToken);
 
+    // Whole, for the terminal's own copy.
+    [Authorize(Policy = Permissions.OrdersTake)]
+    [HttpGet("open/full")]
+    public Task<IReadOnlyList<OrderDto>> GetOpenFull(CancellationToken cancellationToken) => sender.Send(new GetOpenOrderDetailsQuery(), cancellationToken);
+
     [HttpGet]
     [Authorize(Policy = Permissions.OrdersSettle)]
     public Task<IReadOnlyList<OrderSummaryDto>> GetDay([FromQuery] DateOnly date, CancellationToken cancellationToken) =>
@@ -62,7 +67,8 @@ public sealed class OrdersController(ISender sender) : ControllerBase
 
     [Authorize(Policy = Permissions.OrdersTake)]
     [HttpPost("{orderId:guid}/bill")]
-    public Task<OrderDto> PrintBill(Guid orderId, CancellationToken cancellationToken) => sender.Send(new PrintBillCommand(orderId, By), cancellationToken);
+    public Task<OrderDto> PrintBill(Guid orderId, PrintBillRequest? request, CancellationToken cancellationToken) =>
+        sender.Send(new PrintBillCommand(orderId, By, request?.Print ?? true), cancellationToken);
 
     [Authorize(Policy = Permissions.OrdersTake)]
     [HttpPut("{orderId:guid}")]
@@ -145,3 +151,5 @@ public sealed record AttachCustomerRequest(Guid? CustomerId);
 public sealed record RedeemRequest(int Points);
 
 public sealed record PayRequest(IReadOnlyList<NewPayment>? Payments, bool PrintReceipt = true);
+
+public sealed record PrintBillRequest(bool Print = true);

@@ -2,10 +2,10 @@ import { signal } from '@angular/core';
 import { TestBed } from '@angular/core/testing';
 import { MatDialog } from '@angular/material/dialog';
 import { provideRouter } from '@angular/router';
-import { Subject, of } from 'rxjs';
+import { Observable, Subject, firstValueFrom, of } from 'rxjs';
 import { AuthService } from '../../../core/auth/auth.service';
 import { LiveService } from '../../../core/pos/live.service';
-import { OfflineStore } from '../../../core/pos/offline';
+import { OfflineStore, QueuedCommand } from '../../../core/pos/offline';
 import { Order, PosApi } from '../../../core/pos/pos.api';
 import { PrintService } from '../../../core/pos/print';
 import { NotifyService } from '../../../core/ui/notify.service';
@@ -22,8 +22,20 @@ describe('the cashier’s terminal', () => {
   const open = vi.fn();
   const notify = { info: vi.fn(), error: vi.fn() };
   const printedHere = vi.fn();
+  const printOrder = vi.fn();
+  const settledOffline = vi.fn();
   const menu = aMenu();
-  const offline = { queue: signal<{ id: string; orderId: string; failed: boolean; body: unknown }[]>([]), forOrder: (id: string) => offline.queue().filter((c) => c.orderId === id) };
+  const offline = {
+    queue: signal<QueuedCommand[]>([]),
+    forOrder: (id: string) => offline.queue().filter((c) => c.orderId === id),
+    cached: async <T,>(_key: string, fetch: () => Observable<T>) => ({ value: await firstValueFrom(fetch()), stale: false }),
+  };
+  // What the outbox keeps when the server cannot be reached.
+  const queue = (orderId: string, url: string, body: unknown, method: 'POST' | 'PUT' = 'POST') =>
+    offline.queue.update((q) => [
+      ...q,
+      { id: `q${q.length}`, method, url, body, label: '', orderId, createdAt: new Date().toISOString(), attempts: 0, lastError: null, failed: false },
+    ]);
 
   async function render() {
     TestBed.configureTestingModule({
@@ -39,13 +51,17 @@ describe('the cashier’s terminal', () => {
             stale: signal(false),
             start: vi.fn(),
             item: (id: string) => menu.items.find((i) => i.id === id),
+            keep: vi.fn(),
+            cachedOrder: vi.fn().mockResolvedValue(null),
+            markOpenedOffline: vi.fn(),
+            settledOffline,
           },
         },
         { provide: OrderCommands, useValue: commands },
         { provide: OfflineStore, useValue: offline },
         { provide: MatDialog, useValue: { open } },
         { provide: NotifyService, useValue: notify },
-        { provide: PrintService, useValue: { printedHere } },
+        { provide: PrintService, useValue: { printedHere, printOrder } },
         { provide: AuthService, useValue: { can: () => true, me: () => cashierMe } },
         { provide: LiveService, useValue: { ordersChanged: new Subject<string[]>(), shiftChanged: new Subject<void>() } },
       ],
@@ -69,6 +85,8 @@ describe('the cashier’s terminal', () => {
   beforeEach(() => {
     Object.values(commands).forEach((f) => f.mockReset());
     offline.queue.set([]);
+    printOrder.mockReset();
+    settledOffline.mockReset();
     open.mockReset();
     notify.info.mockReset();
     notify.error.mockReset();
@@ -141,17 +159,19 @@ describe('the cashier’s terminal', () => {
     expect(notify.info).toHaveBeenCalledWith('Voided: a VOID ticket went to the kitchen. · أُرسل بون إلغاء للمطبخ.');
   });
 
-  it('goes on with a check opened while the server cannot be reached, its items shown as waiting', async () => {
-    // The outbox keeps what it could not send: the check, then its item.
+  it('goes on with a check opened while the server cannot be reached: its items priced here and shown as waiting', async () => {
     commands.open.mockImplementation(async (type: string, tableId: string | null, guests: number, _c: unknown, id: string) => {
-      offline.queue.update((q) => [...q, { id: 'q1', orderId: id, failed: false, body: { orderId: id, type, tableId, guests } }]);
+      queue(id, '/api/orders', { orderId: id, type, tableId, guests });
       return null;
     });
     commands.add.mockImplementation(async (order: Order, items: unknown[]) => {
-      offline.queue.update((q) => [...q, { id: 'q2', orderId: order.id, failed: false, body: { items } }]);
+      queue(order.id, `/api/orders/${order.id}/items`, { items, sendToKitchen: false });
       return null;
     });
-    commands.send.mockResolvedValue(null);
+    commands.send.mockImplementation(async (order: Order) => {
+      queue(order.id, `/api/orders/${order.id}/send`, {});
+      return null;
+    });
     const { el, settle, button } = await render();
 
     el.querySelector<HTMLButtonElement>('.item')!.click();
@@ -162,11 +182,39 @@ describe('the cashier’s terminal', () => {
     expect(order.id).toBe(commands.open.mock.lastCall![4]);
     expect(text(el.querySelector('.check-head')!)).toContain('Waiting to sync');
     const waiting = el.querySelector('.line.waiting')!;
-    expect([text(waiting.querySelector('.qty')!), text(waiting.querySelector('.name')!)]).toEqual(['1×', 'Beef burger']);
-    expect(text(waiting.querySelector('.state')!)).toContain('Waiting to sync');
+    expect([text(waiting.querySelector('.qty')!), text(waiting.querySelector('.name')!), text(waiting.querySelector('.total')!)]).toEqual(['1×', 'Beef burger', 'L.E 180.00']);
+    expect(text(waiting.querySelector('.state')!)).toBe('Not sent · Waiting to sync · بانتظار المزامنة');
+    // A takeaway: VAT, no service. 180 + 25.20.
+    expect(text(el.querySelector('.totals .grand')!)).toContain('L.E 205.20');
 
     button('Send to kitchen').click();
     await settle();
     expect(commands.send).toHaveBeenCalled();
+    expect(text(el.querySelector('.line.waiting .state')!)).toContain('Sent to kitchen');
+  });
+
+  it('settles a check while the server cannot be reached: the receipt printed here, the table freed, the payment kept to send', async () => {
+    const table = anOrder({ lines: [aLine({ status: 'Sent', kitchenTicketNumber: 4 })] });
+    commands.open.mockResolvedValue(table);
+    commands.add.mockResolvedValue(table);
+    commands.pay.mockImplementation(async (order: Order, payments: unknown[]) => {
+      queue(order.id, `/api/orders/${order.id}/pay`, { payments, printReceipt: false });
+      return null;
+    });
+    const { el, settle, key } = await render();
+    el.querySelector<HTMLButtonElement>('.item')!.click();
+    await settle();
+
+    open.mockReturnValue({
+      afterClosed: () => of({ payments: [{ paymentId: 'pay-1', method: 'Cash', amount: 459.65, tendered: 500, reference: null }], printReceipt: true }),
+    });
+    await key('F9');
+
+    expect(open.mock.lastCall![1].data.order.totals.due).toBe(459.65);
+    const [printed, paid] = printOrder.mock.lastCall!;
+    expect([printed.status, printed.payments[0].change, paid]).toEqual(['Paid', 40.35, true]);
+    expect(settledOffline).toHaveBeenCalledWith(expect.objectContaining({ id: 'order-1', status: 'Paid' }));
+    expect(notify.info).toHaveBeenLastCalledWith(expect.stringContaining('Paid offline: change L.E 40.35'));
+    expect(text(el.querySelector('.closed-bar')!)).toContain('Waiting to sync');
   });
 });

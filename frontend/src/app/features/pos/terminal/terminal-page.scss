@@ -439,9 +439,13 @@
     background: var(--tag-ok-bg, #e6f4ea);
     color: var(--tag-ok-fg, #1e6b34);
   }
+  // Done here while the server could not be reached: it reaches the server once it answers.
   &.waiting {
-    opacity: 0.6;
-    font-style: italic;
+    border-inline-start: 3px dashed var(--tag-warn-fg, #8a5300);
+    .state {
+      background: var(--tag-warn-bg, #fff3d6);
+      color: var(--tag-warn-fg, #8a5300);
+    }
   }
   .line-actions {
     grid-area: actions;
