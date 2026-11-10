@@ -59,6 +59,7 @@ internal sealed class MenuItemSizeConfiguration : IEntityTypeConfiguration<MenuI
     public void Configure(EntityTypeBuilder<MenuItemSize> builder)
     {
         builder.ToTable("MenuItemSizes", PosDbContext.PosSchema);
+        builder.Property(s => s.Code).HasMaxLength(MenuItemSize.MaxCodeLength);
         builder.Property(s => s.Name).HasMaxLength(MenuItem.MaxNameLength);
         builder.Property(s => s.NameAr).HasMaxLength(MenuItem.MaxNameLength);
     }

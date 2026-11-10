@@ -54,6 +54,20 @@ export interface Option {
   name: string;
   nameAr: string | null;
   price: number;
+  // A size's code in the costing system (6101-17), when the menu came from there.
+  code?: string | null;
+}
+
+// The menu pulled from the costing system: what it held, what was added, changed and taken off.
+export interface MenuPullResult {
+  categories: number;
+  categoriesAdded: number;
+  items: number;
+  itemsAdded: number;
+  itemsUpdated: number;
+  itemsTakenOff: number;
+  sizes: number;
+  pricedByAddOns: number;
 }
 
 export interface Station {
@@ -717,6 +731,11 @@ export class PosApi {
 
   costingSheet(date: string): Observable<Blob> {
     return this.http.get('/api/integrations/costing/sheet', { params: { date }, responseType: 'blob' });
+  }
+
+  // سحب المنيو من التكاليف: the costing system's menu taken as this POS's own.
+  pullCostingMenu(): Observable<MenuPullResult> {
+    return this.http.post<MenuPullResult>('/api/integrations/costing/menu', {});
   }
 
   syncHrStaff(): Observable<{ received: number; added: number; updated: number; skipped: number }> {

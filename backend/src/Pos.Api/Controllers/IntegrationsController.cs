@@ -52,11 +52,19 @@ public sealed class IntegrationsController(ISender sender) : ControllerBase
     [HttpGet("costing/sheet")]
     [Authorize(Policy = Permissions.ShiftsManage)]
     public async Task<IActionResult> CostingSheet([FromQuery] DateOnly date, [FromServices] IOrderRepository orders, [FromServices] ICompanyProfile company,
+        [FromServices] Pos.Domain.Catalog.IMenuItemRepository items,
         CancellationToken cancellationToken)
     {
-        var bytes = CostingSheets.Build(date, company.Current.Name, await orders.GetForDayAsync(date, cancellationToken));
+        var sizeCodes = (await items.GetAllAsync(cancellationToken)).SelectMany(i => i.Sizes).Where(z => z.Code is not null).ToDictionary(z => z.Id, z => z.Code!);
+        var bytes = CostingSheets.Build(date, company.Current.Name, await orders.GetForDayAsync(date, cancellationToken), sizeCodes);
         return File(bytes, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", $"costing-{date:yyyy-MM-dd}.xlsx");
     }
+
+    // The costing system's menu taken as this POS's own (سحب المنيو من التكاليف).
+    [Authorize(Policy = Permissions.SetupManage)]
+    [HttpPost("costing/menu")]
+    public Task<MenuPullResult> PullCostingMenu(CancellationToken cancellationToken) =>
+        sender.Send(new PullCostingMenuCommand(Actors.Of(User)), cancellationToken);
 
     // The HR system's staff brought in: added or changed by their employee id, their PINs set.
     [Authorize(Policy = Permissions.SetupManage)]

@@ -2,6 +2,7 @@ using System.Text.Json;
 using MediatR;
 using Pos.Application.Common;
 using Pos.Application.Integrations;
+using Pos.Domain.Catalog;
 using Pos.Domain.Common;
 using Pos.Domain.Integrations;
 using Pos.Domain.Orders;
@@ -19,9 +20,11 @@ public sealed record PaidOutDto(Guid Id, PaidOutKind Kind, decimal Amount, strin
 
 public sealed record VoidReasonLine(string Reason, int Count, decimal Amount);
 
-public sealed record SoldItemLine(int Code, string Name, int Quantity, decimal Amount);
+// Size: the size sold, by name; ItemCode: the code the costing system knows it by (6101, a size
+// 6101-17 when the menu came from there), so it takes the size's own recipe.
+public sealed record SoldItemLine(int Code, string Name, int Quantity, decimal Amount, string? Size = null, string? ItemCode = null);
 
-public sealed record WasteLine(int Code, string Name, int Quantity, decimal Amount, StockOutcome Outcome, string? Reason);
+public sealed record WasteLine(int Code, string Name, int Quantity, decimal Amount, StockOutcome Outcome, string? Reason, string? Size = null, string? ItemCode = null);
 
 public sealed record DriverLine(string Driver, int Orders, decimal Cash, decimal Total);
 
@@ -78,11 +81,16 @@ internal static class ShiftMapping
 }
 
 // The Z report of a shift as it stands: its paid checks, and the voids on the checks it closed.
-internal sealed class ZReportBuilder(IOrderRepository orders)
+internal sealed class ZReportBuilder(IOrderRepository orders, IMenuItemRepository items)
 {
     public async Task<ZReportDto> BuildAsync(Shift shift, decimal? countedCash, CancellationToken cancellationToken)
     {
         var closedHere = await orders.GetForShiftAsync(shift.Id, cancellationToken);
+        // A size's costing code, by the size; else the item's code, its size by name beside it.
+        var sizeCodes = (await items.GetAllAsync(cancellationToken)).SelectMany(i => i.Sizes)
+            .Where(z => z.Code is not null).ToDictionary(z => z.Id, z => z.Code!);
+        string ItemCode(int code, Guid? sizeId) => sizeId is { } id && sizeCodes.TryGetValue(id, out var sized) ? sized : code.ToString(System.Globalization.CultureInfo.InvariantCulture);
+        var linesById = closedHere.SelectMany(o => o.Lines).ToDictionary(l => l.Id);
         var paid = closedHere.Where(o => o.Status == OrderStatus.Paid).ToList();
         var open = (await orders.GetOpenAsync(cancellationToken)).Count(o => o.Lines.Any(l => l.Quantity > 0));
         var totals = paid.Select(o => (Order: o, Totals: o.Totals)).ToList();
@@ -107,15 +115,19 @@ internal sealed class ZReportBuilder(IOrderRepository orders)
             before.Sum(v => v.Quantity), before.Sum(v => v.Amount), after.Sum(v => v.Quantity), after.Sum(v => v.Amount),
             after.GroupBy(v => v.Reason ?? "—").Select(g => new VoidReasonLine(g.Key, g.Sum(v => v.Quantity), g.Sum(v => v.Amount)))
                 .OrderByDescending(r => r.Amount).ToList(),
-            after.Select(v => new WasteLine(v.Code, v.ItemName, v.Quantity, v.Amount, v.Outcome, v.Reason)).ToList(),
+            after.Select(v =>
+            {
+                var line = linesById.GetValueOrDefault(v.LineId);
+                return new WasteLine(v.Code, v.ItemName, v.Quantity, v.Amount, v.Outcome, v.Reason, line?.SizeName, ItemCode(v.Code, line?.SizeId));
+            }).ToList(),
             paid.Where(o => o.Type == OrderType.Delivery).GroupBy(o => o.DriverName ?? "No driver · بدون سائق")
                 .Select(g => new DriverLine(g.Key, g.Count(),
                     g.SelectMany(o => o.Payments).Where(p => p.Method == PaymentMethod.Cash).Sum(p => p.Amount), g.Sum(o => o.Totals.Total)))
                 .OrderBy(d => d.Driver).ToList(),
             expected, counted, counted is { } c ? c - expected : null, open,
-            paid.SelectMany(o => o.Lines).Where(l => l.Quantity > 0).GroupBy(l => (l.Code, l.Name))
-                .Select(g => new SoldItemLine(g.Key.Code, g.Key.Name, g.Sum(l => l.Quantity), g.Sum(l => l.Total)))
-                .OrderBy(i => i.Code).ToList());
+            paid.SelectMany(o => o.Lines).Where(l => l.Quantity > 0).GroupBy(l => (l.Code, l.Name, l.SizeName, Item: ItemCode(l.Code, l.SizeId)))
+                .Select(g => new SoldItemLine(g.Key.Code, g.Key.Name, g.Sum(l => l.Quantity), g.Sum(l => l.Total), g.Key.SizeName, g.Key.Item))
+                .OrderBy(i => i.Code).ThenBy(i => i.Size).ToList());
     }
 }
 
@@ -230,9 +242,11 @@ public static class CostingDay
         z.BusinessDate,
         z.OpenedAtUtc,
         z.ClosedAtUtc,
-        SoldItems = z.SoldItems.Select(i => new { i.Code, i.Name, i.Quantity, NetAmount = i.Amount }),
-        Waste = z.VoidAfterItems.Where(w => w.Outcome == StockOutcome.Waste).Select(w => new { w.Code, w.Name, w.Quantity, w.Amount, w.Reason }),
-        ReturnedToStock = z.VoidAfterItems.Where(w => w.Outcome == StockOutcome.ReturnToStock).Select(w => new { w.Code, w.Name, w.Quantity, w.Reason }),
+        SoldItems = z.SoldItems.Select(i => new { i.Code, ItemCode = i.ItemCode ?? i.Code.ToString(System.Globalization.CultureInfo.InvariantCulture), i.Size, i.Name, i.Quantity, NetAmount = i.Amount }),
+        Waste = z.VoidAfterItems.Where(w => w.Outcome == StockOutcome.Waste)
+            .Select(w => new { w.Code, ItemCode = w.ItemCode ?? w.Code.ToString(System.Globalization.CultureInfo.InvariantCulture), w.Size, w.Name, w.Quantity, w.Amount, w.Reason }),
+        ReturnedToStock = z.VoidAfterItems.Where(w => w.Outcome == StockOutcome.ReturnToStock)
+            .Select(w => new { w.Code, ItemCode = w.ItemCode ?? w.Code.ToString(System.Globalization.CultureInfo.InvariantCulture), w.Size, w.Name, w.Quantity, w.Reason }),
         Takings = new
         {
             Cash = BeforeTax(z, z.CashSales),

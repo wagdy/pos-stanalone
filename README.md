@@ -140,8 +140,10 @@ restarting), the terminal goes on:
 ## Integration Hub
 
 Settings → Integrations links **Costing & Financials**, **Online ordering & loyalty** and
-**HR & payroll**: each switched on with its URL, API key and branch code, and tested. The event
-contract, the loyalty lookups and the Costing Excel layout are in
+**HR & payroll**: each switched on with its URL, API key and branch code, and tested. Linked to
+Costing, **Pull menu (سحب المنيو من التكاليف)** takes the menu from it: categories, items, sizes,
+prices and codes, each size keeping its Costing code (`6101-17`) for the Z report. The event
+contract, the menu pull, the loyalty lookups and the Costing Excel layout are in
 [docs/integrations.md](docs/integrations.md).
 
 ## Tests

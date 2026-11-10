@@ -120,6 +120,10 @@ public sealed class MenuItem : AggregateRoot
             throw new DomainException("A size or modifier is listed twice.");
         Replace(_sizes, sizes, (o, i) => new MenuItemSize(o.Id, Id, o.Name, o.NameAr, o.Price, i));
         Replace(_modifiers, modifiers, (o, i) => new MenuModifier(o.Id, Id, o.Name, o.NameAr, o.Price, i));
+        // A size's code from the costing system (6101-17): given, it is set; not given (a size
+        // saved on the menu page), the one it had is kept.
+        foreach (var given in sizes.Where(s => s.Code is not null))
+            _sizes.Single(s => s.Id == given.Id).Coded(given.Code);
     }
 
     public MenuItemSize? Size(Guid? sizeId) => sizeId is { } id ? _sizes.SingleOrDefault(s => s.Id == id) : null;
@@ -139,7 +143,8 @@ public sealed class MenuItem : AggregateRoot
     }
 }
 
-public sealed record MenuOption(Guid Id, string Name, string? NameAr, decimal Price);
+// Code: a size's code in the costing system, as its Z report names it there.
+public sealed record MenuOption(Guid Id, string Name, string? NameAr, decimal Price, string? Code = null);
 
 public abstract class MenuOptionEntity : Entity
 {
@@ -174,8 +179,22 @@ public sealed class MenuItemSize : MenuOptionEntity
 {
     private MenuItemSize() { }
 
+    public const int MaxCodeLength = 32;
+
     internal MenuItemSize(Guid id, Guid menuItemId, string name, string? nameAr, decimal price, int sortOrder)
         : base(id, menuItemId, name, nameAr, price, sortOrder) { }
+
+    // Its code in the costing system (6101-17), when the menu came from there: what a Z report
+    // sends for it, so the costing system takes the size's own recipe.
+    public string? Code { get; private set; }
+
+    internal void Coded(string? code)
+    {
+        var trimmed = string.IsNullOrWhiteSpace(code) ? null : code.Trim();
+        if (trimmed?.Length > MaxCodeLength)
+            throw new DomainException($"A size's code is {MaxCodeLength} characters at most.");
+        Code = trimmed;
+    }
 }
 
 // A modifier (إضافة): extra cheese, no onions; what it adds to the price, nothing for a free one.

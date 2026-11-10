@@ -8,7 +8,7 @@ the past.
 
 | System | What it gets | What the POS asks of it |
 | --- | --- | --- |
-| Costing & Financials | `day.closed` at each Z close | — |
+| Costing & Financials | `day.closed` at each Z close | Its menu (Pull menu) |
 | Online ordering & loyalty | `customer.registered`, `order.paid` (points earned and redeemed) | Customers by phone, their points (live) |
 | HR & payroll | `staff.advance`, `staff.meal`, `clock.event` | The staff and their PINs (Sync staff) |
 
@@ -23,6 +23,7 @@ the past.
 - `GET {base}/api/integrations/pos/ping`: **Test**. Any 2xx is connected.
 - `POST {base}/api/integrations/pos/events`: one event, in the envelope below.
 - `GET {base}/api/integrations/pos/staff` (HR only): the staff, for **Sync staff**.
+- `GET {base}/api/integrations/pos/menu` (Costing only): the menu, for **Pull menu**.
 
 ### What an answer means
 
@@ -58,9 +59,9 @@ At each shift's close (the Z report). `data`:
 {
   "shiftId": "…", "shiftNumber": 3, "businessDate": "2026-11-09",
   "openedAtUtc": "…", "closedAtUtc": "…",
-  "soldItems": [{ "code": 6101, "name": "Margherita", "quantity": 1, "netAmount": 215.0 }],
-  "waste": [{ "code": 9003, "name": "Soft drink", "quantity": 1, "amount": 30.0, "reason": "Captain error" }],
-  "returnedToStock": [{ "code": 7001, "name": "Classic burger", "quantity": 1, "reason": "Customer changed mind" }],
+  "soldItems": [{ "code": 6101, "name": "Margherita", "size": "Large", "itemCode": "6101-17", "quantity": 1, "netAmount": 190.0 }],
+  "waste": [{ "code": 9003, "name": "Soft drink", "size": null, "itemCode": "9003", "quantity": 1, "amount": 30.0, "reason": "Captain error" }],
+  "returnedToStock": [{ "code": 7001, "name": "Classic burger", "size": null, "itemCode": "7001", "quantity": 1, "reason": "Customer changed mind" }],
   "takings": {
     "cash": 627.2, "card": 0, "tax": 87.81, "netSales": 627.2,
     "voidsBefore": { "count": 0, "amount": 0 },
@@ -70,10 +71,17 @@ At each shift's close (the Z report). `data`:
 }
 ```
 
-`soldItems` is net of voids, by the menu's item code (Costing matches its menu items by code).
-`waste` are the voids after the kitchen that were already made (stock used, nothing sold);
+`soldItems` is net of voids, one line per item and size. `itemCode` is the code Costing knows
+it by: the item's number (`9003`), or for a size its code there (`6101-17`, item 6101's size 17),
+which the size has once the menu is pulled from Costing. A size made here by hand has none, so
+its `itemCode` is the item's number and Costing finds the size by its name (`size`). `waste` are
+the voids after the kitchen that were already made (stock used, nothing sold);
 `returnedToStock` the ones not yet made. In `takings`, `cash` and `card` are before tax (the tax
 taken off in proportion), with `tax` apart.
+
+Costing answers each `day.closed` with what it did (recorded, unchanged, updated), refuses one
+it cannot place (an item not on its menu, or a day whose sales or takings were typed in there by
+hand) with 422, and logs every call under its **Settings → POS Integration → Sync log**.
 
 ### `order.paid` → loyalty
 
@@ -135,6 +143,38 @@ If the ordering system cannot be reached, the till goes on with what it knows: t
 the POS has them, and their balance as last seen (a redemption is checked against it). What was
 earned and redeemed reaches the ordering system in `order.paid`, through the outbox.
 
+## Costing: the menu (سحب المنيو من التكاليف)
+
+With the Costing link on, **Settings → Integrations → Costing → Pull menu** reads
+`GET {base}/api/integrations/pos/menu`:
+
+```json
+{
+  "atUtc": "2026-11-10T09:44:29Z",
+  "categories": [{ "name": "Pizza", "nameAr": "بيتزا", "displayOrder": 1 }],
+  "items": [{
+    "code": 6101, "name": "Margherita", "nameAr": "مارجريتا", "category": "Pizza", "price": 190,
+    "isAvailable": true, "pricedByAddOns": false, "hasRecipe": true,
+    "sizes": [{ "code": "6101-17", "variantId": 17, "name": "Large", "nameAr": "كبير", "price": 190 },
+              { "code": "6101-18", "variantId": 18, "name": "Medium", "nameAr": "وسط", "price": 140 }],
+    "addOnCodes": []
+  }],
+  "addOns": [{ "code": "A3", "name": "Extra cheese", "nameAr": "جبنة زيادة", "price": 25 }]
+}
+```
+
+- Categories are matched by name: a new one is added, a known one keeps its colour here.
+- Items are matched by their number: a new one is added, a known one takes Costing's name,
+  category, price and availability, and keeps its kitchen station and modifiers from here.
+- Sizes are matched by their Costing code, then by name, so a size keeps its id here (and its past
+  checks); each keeps its Costing code for the Z report.
+- Costing's add-ons are not pulled: the modifiers here stay this POS's own.
+- An item Costing no longer has is taken off the menu here, not deleted. One Costing prices by
+  its add-ons (a kilo of mixed grill) has no price to ring up at, so it is left off.
+
+Pull again whenever the menu changes in Costing. Without the link, the menu is kept here by hand
+as before; an item or size added by hand is sent by its number and size name.
+
 ## Costing without the link: the Excel sheet
 
 **Shift & Z report → Costing sheet**, or **Integrations → Excel for Costing's import**,
@@ -142,6 +182,6 @@ downloads one business day (`GET /api/integrations/costing/sheet?date=yyyy-MM-dd
 
 | Sheet | Columns | In Costing |
 | --- | --- | --- |
-| Daily Sales | `Item · الصنف` (code and name), `Quantity Sold · الكمية المباعة` | Sales → Import, as it is |
+| Daily Sales | `Item · الصنف` (code and name; a size pulled from Costing by its code there, `6101-17`), `Quantity Sold · الكمية المباعة` | Sales → Import, as it is |
 | Voids After Kitchen | Code, Item, Quantity, Amount, Made? (Waste / Back to stock), Reason, Authorised by, Check | Waste |
 | Takings | Company, business day, checks paid, cash and Visa before tax, total tax collected, net sales, total with tax, staff meals, voids before and after the kitchen, void reasons | Financials → Takings in |

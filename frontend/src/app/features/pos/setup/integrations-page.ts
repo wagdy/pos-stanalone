@@ -10,7 +10,7 @@ import { MatSlideToggleModule } from '@angular/material/slide-toggle';
 import { firstValueFrom } from 'rxjs';
 import { errorMessage } from '../../../core/http/error-message';
 import { LiveService } from '../../../core/pos/live.service';
-import { Link, LinkedSystem, PosApi, SyncItem } from '../../../core/pos/pos.api';
+import { Link, LinkedSystem, MenuPullResult, PosApi, SyncItem } from '../../../core/pos/pos.api';
 import { SyncStatus } from '../../../core/pos/sync-status.service';
 import { NotifyService } from '../../../core/ui/notify.service';
 import { saveBlob } from '../../../core/ui/save-blob';
@@ -124,6 +124,17 @@ const about: Record<LinkedSystem, { en: string; ar: string; icon: string; sends:
               <button mat-flat-button (click)="save(l.system)" [disabled]="busy()"><mat-icon>save</mat-icon> Save</button>
             </div>
             @if (l.system === 'Costing') {
+              <div class="export pull">
+                <strong>Menu from Costing · سحب المنيو من التكاليف</strong>
+                <small class="muted">Takes Costing's categories, items, sizes, prices and codes as this POS's menu. Each item's kitchen station and
+                  modifiers stay as set here; an item Costing no longer sells is taken off. Unlinked, the menu is kept by hand on Setup → Menu.</small>
+                <div class="row">
+                  <button mat-flat-button (click)="pullMenu()" [disabled]="!l.enabled || !l.hasApiKey || busy()"><mat-icon>cloud_download</mat-icon> Pull menu from Costing</button>
+                  @if (pulled(); as p) {
+                    <span class="tag ok">{{ p.items }} items · {{ p.itemsAdded }} new · {{ p.itemsUpdated }} updated · {{ p.itemsTakenOff }} taken off · {{ p.sizes }} sizes</span>
+                  }
+                </div>
+              </div>
               <div class="export">
                 <strong>Excel for Costing's import · تصدير إكسل</strong>
                 <small class="muted">The day's sales, voids after the kitchen and takings, laid out as Costing's import sheets.</small>
@@ -294,6 +305,7 @@ export class IntegrationsPage implements OnInit {
   protected readonly forms = signal<Partial<Record<LinkedSystem, LinkForm>>>({});
   protected readonly queue = signal<SyncItem[]>([]);
   protected readonly busy = signal(false);
+  protected readonly pulled = signal<MenuPullResult | null>(null);
   protected readonly failedCount = computed(() => this.queue().filter((i) => i.status === 'Failed').length);
   protected sheetDate = new Date().toISOString().slice(0, 10);
 
@@ -335,6 +347,15 @@ export class IntegrationsPage implements OnInit {
       const r = await firstValueFrom(this.api.syncHrStaff());
       this.notify.info(`From HR: ${r.received} staff, ${r.added} added, ${r.updated} updated, ${r.skipped} skipped.`);
     }, 'The staff could not be synced.');
+  }
+
+  protected async pullMenu(): Promise<void> {
+    if (!confirm("Take Costing's menu as this POS's menu? Names, prices and sizes are replaced by Costing's; stations and modifiers stay. · سحب المنيو")) return;
+    await this.act(async () => {
+      const result = await firstValueFrom(this.api.pullCostingMenu());
+      this.pulled.set(result);
+      this.notify.info(`Menu pulled from Costing: ${result.items} items (${result.itemsAdded} new, ${result.itemsTakenOff} taken off). · تم سحب المنيو`);
+    }, 'The menu could not be pulled from Costing.');
   }
 
   protected async sheet(): Promise<void> {

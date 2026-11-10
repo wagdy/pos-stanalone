@@ -62,7 +62,7 @@ public sealed class TestPos
         services.AddSingleton<IPrintSpooler>(Printed);
         services.AddSingleton<ILoyaltyGateway>(Loyalty);
         services.AddSingleton<IStaffDirectory>(Staff);
-        services.AddSingleton<ILinkGateway>(new NoGateway());
+        services.AddSingleton<ILinkGateway>(Gateway);
         services.AddSingleton<ICompanyProfile>(new Profile());
         services.AddSingleton<ICompanySettingsStore>(new CompanyStore());
         _services = services.BuildServiceProvider(new ServiceProviderOptions { ValidateScopes = true, ValidateOnBuild = true });
@@ -108,12 +108,17 @@ public sealed class TestPos
         public void Wake() { }
     }
 
-    private sealed class NoGateway : ILinkGateway
+    // The linked systems: they answer, and the costing system's menu is what a test sets.
+    public TestGateway Gateway { get; } = new();
+
+    public sealed class TestGateway : ILinkGateway
     {
+        public CostingMenu CostingMenu { get; set; } = new([], []);
         public Task<LinkTestResult> TestAsync(IntegrationLink link, CancellationToken cancellationToken = default) => Task.FromResult(new LinkTestResult(true, "ok"));
         public Task SendAsync(IntegrationLink link, SyncItem item, CancellationToken cancellationToken = default) => Task.CompletedTask;
         public Task<IReadOnlyList<HrStaffMember>> HrStaffAsync(IntegrationLink link, CancellationToken cancellationToken = default) =>
             Task.FromResult<IReadOnlyList<HrStaffMember>>([]);
+        public Task<CostingMenu> CostingMenuAsync(IntegrationLink link, CancellationToken cancellationToken = default) => Task.FromResult(CostingMenu);
     }
 }
 

@@ -63,6 +63,17 @@ internal sealed class LinkGateway(IHttpClientFactory http) : ILinkGateway
         return await response.Content.ReadFromJsonAsync<List<HrStaffMember>>(Outbox.Json, cancellationToken) ?? [];
     }
 
+    public async Task<CostingMenu> CostingMenuAsync(IntegrationLink link, CancellationToken cancellationToken = default)
+    {
+        using var response = await SendAsync(link, HttpMethod.Get, "api/integrations/pos/menu", null, cancellationToken);
+        if (response.StatusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden)
+            throw new LinkRefusedException("The costing system refused the key: make a key on its Settings → POS Integration and paste it here.");
+        if (!response.IsSuccessStatusCode)
+            throw new LinkUnavailableException($"The costing system answered {(int)response.StatusCode}.");
+        return await response.Content.ReadFromJsonAsync<CostingMenu>(Outbox.Json, cancellationToken)
+            ?? throw new LinkUnavailableException("The costing system sent no menu.");
+    }
+
     internal async Task<HttpResponseMessage> SendAsync(IntegrationLink link, HttpMethod method, string path, string? json, CancellationToken cancellationToken,
         Guid? idempotencyKey = null)
     {

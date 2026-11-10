@@ -106,7 +106,22 @@ public interface ILinkGateway
     Task SendAsync(IntegrationLink link, SyncItem item, CancellationToken cancellationToken = default);
 
     Task<IReadOnlyList<HrStaffMember>> HrStaffAsync(IntegrationLink link, CancellationToken cancellationToken = default);
+
+    // The costing system's menu (GET …/api/integrations/pos/menu), when it is the menu's master.
+    Task<CostingMenu> CostingMenuAsync(IntegrationLink link, CancellationToken cancellationToken = default);
 }
+
+// The menu as the costing system gives it: items by their number (6101), sizes by their code
+// there (6101-17), categories by name.
+public sealed record CostingMenu(IReadOnlyList<CostingMenuCategory> Categories, IReadOnlyList<CostingMenuItem> Items);
+
+public sealed record CostingMenuCategory(string Name, string? NameAr, int DisplayOrder);
+
+public sealed record CostingMenuItem(
+    int Code, string Name, string? NameAr, string Category, decimal Price, bool IsAvailable, bool PricedByAddOns, bool HasRecipe,
+    IReadOnlyList<CostingMenuSize> Sizes);
+
+public sealed record CostingMenuSize(string Code, string Name, string? NameAr, decimal Price);
 
 // The system answered, and said no.
 public sealed class LinkRefusedException(string message) : Exception(message);

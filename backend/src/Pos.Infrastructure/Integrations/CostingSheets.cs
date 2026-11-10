@@ -13,7 +13,9 @@ public static class CostingSheets
     public const string ItemHeader = "Item · الصنف";
     public const string QuantityHeader = "Quantity Sold · الكمية المباعة";
 
-    public static byte[] Build(DateOnly date, string company, IReadOnlyList<Order> orders)
+    // sizeCodes: each size's code in the costing system (6101-17), for a size sold to be written as
+    // Costing's import reads it; without one, the item's code and the size's name.
+    public static byte[] Build(DateOnly date, string company, IReadOnlyList<Order> orders, IReadOnlyDictionary<Guid, string>? sizeCodes = null)
     {
         var paid = orders.Where(o => o.Status == OrderStatus.Paid).ToList();
         using var book = new XLWorkbook();
@@ -23,9 +25,10 @@ public static class CostingSheets
         sales.Cell(1, 2).Value = QuantityHeader;
         var row = 2;
         foreach (var item in paid.SelectMany(o => o.Lines).Where(l => l.Quantity > 0)
-                     .GroupBy(l => (l.Code, l.Name, l.SizeName)).OrderBy(g => g.Key.Code).ThenBy(g => g.Key.SizeName))
+                     .GroupBy(l => (l.Code, l.Name, l.SizeName, SizeCode: l.SizeId is { } id ? sizeCodes?.GetValueOrDefault(id) : null))
+                     .OrderBy(g => g.Key.Code).ThenBy(g => g.Key.SizeName))
         {
-            sales.Cell(row, 1).Value = $"{item.Key.Code} · {item.Key.Name}{(item.Key.SizeName is { } size ? $" ({size})" : "")}";
+            sales.Cell(row, 1).Value = $"{item.Key.SizeCode ?? item.Key.Code.ToString(System.Globalization.CultureInfo.InvariantCulture)} · {item.Key.Name}{(item.Key.SizeName is { } size ? $" ({size})" : "")}";
             sales.Cell(row, 2).Value = item.Sum(l => l.Quantity);
             row++;
         }

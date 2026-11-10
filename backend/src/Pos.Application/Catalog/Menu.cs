@@ -12,7 +12,8 @@ namespace Pos.Application.Catalog;
 // their sizes and modifiers. Ids are made by the screen. Read whole: the till keeps a copy to work
 // from when the network is down.
 
-public sealed record OptionDto(Guid Id, string Name, string? NameAr, decimal Price);
+// Code: a size's code in the costing system, when the menu came from there.
+public sealed record OptionDto(Guid Id, string Name, string? NameAr, decimal Price, string? Code = null);
 
 public sealed record StationDto(Guid Id, string Name, string? NameAr, int SortOrder, Guid? PrinterId, string? PrinterName,
     PrinterConnection? PrinterConnection = null);
@@ -76,7 +77,7 @@ internal static class MenuMapping
 {
     public static MenuItemDto Dto(MenuItem item) => new(
         item.Id, item.Code, item.Name, item.NameAr, item.CategoryId, item.StationId, item.Price, item.IsActive,
-        item.Sizes.Select(s => new OptionDto(s.Id, s.Name, s.NameAr, s.Price)).ToList(),
+        item.Sizes.Select(s => new OptionDto(s.Id, s.Name, s.NameAr, s.Price, s.Code)).ToList(),
         item.Modifiers.Select(m => new OptionDto(m.Id, m.Name, m.NameAr, m.Price)).ToList());
 }
 

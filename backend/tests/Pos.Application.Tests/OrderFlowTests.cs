@@ -328,4 +328,52 @@ public class OrderFlowTests
         Assert.Single(order.Payments);
         Assert.Equal([other.Id], (await _pos.Send(new GetOpenOrderDetailsQuery())).Select(o => o.Id));
     }
+
+    // The costing system linked, the menu is pulled from it: its categories and items by code, each
+    // size with its code there; this POS's stations and modifiers kept; an item it no longer sells
+    // taken off. A size sold then goes in the Z report by that code, so Costing takes its recipe.
+    [Fact]
+    public async Task The_menu_is_pulled_from_costing_and_a_size_sold_goes_to_costing_by_its_code()
+    {
+        var extra = _burger.Modifiers.Single();
+        var largeHere = _pizza.Sizes.Single().Id;
+        _pos.Store.Links.SwitchOn(LinkedSystem.Costing);
+        _pos.Gateway.CostingMenu = new CostingMenu(
+            [new("Food", "أكل", 1), new("Drinks", "مشروبات", 2)],
+            [
+                new(6101, "Margherita", "مارجريتا", "Food", 0, true, false, true,
+                    [new("6101-17", "Large", "كبير", 210), new("6101-18", "Medium", "وسط", 160)]),
+                new(9001, "Tea", "شاي", "Drinks", 25, true, false, false, []),
+                new(5000, "Mixed grill kilo", null, "Food", 0, true, true, true, []),
+            ]);
+
+        var pulled = await _pos.Send(new PullCostingMenuCommand(TestPos.Manager));
+
+        Assert.Equal(new MenuPullResult(2, 1, 3, 2, 1, 1, 2, 1), pulled);
+        var pizza = _pos.Store.Items.All.Single(i => i.Code == 6101);
+        Assert.Equal(("Margherita", _oven.Id), (pizza.Name, pizza.StationId));
+        // The size named Large here keeps its id, now with its code there.
+        Assert.Equal([("Large", "6101-17", 210m), ("Medium", "6101-18", 160m)], pizza.Sizes.Select(z => (z.Name, z.Code, z.Price)));
+        Assert.Equal(largeHere, pizza.Sizes[0].Id);
+        Assert.False(_pos.Store.Items.All.Single(i => i.Code == 7001).IsActive);
+        Assert.Single(_pos.Store.Items.All.Single(i => i.Code == 7001).Modifiers, m => m.Id == extra.Id);
+        Assert.False(_pos.Store.Items.All.Single(i => i.Code == 5000).IsActive);
+        Assert.Equal("Drinks", _pos.Store.Categories.All.Single(c => c.Id == _pos.Store.Items.All.Single(i => i.Code == 9001).CategoryId).Name);
+
+        // A large Margherita and a tea sold, a large one made and voided: by their codes there.
+        var shift = await OpenShift();
+        var order = await _pos.Send(new OpenOrderCommand(Guid.NewGuid(), OrderType.Takeaway, null, 0, TestPos.Cashier));
+        var large = pizza.Sizes[0].Id;
+        var lines = new[] { new NewLine(Guid.NewGuid(), pizza.Id, large, null, 2, null), new NewLine(Guid.NewGuid(), _pos.Store.Items.All.Single(i => i.Code == 9001).Id, null, null, 1, null) };
+        order = await _pos.Send(new AddItemsCommand(order.Id, lines, true, TestPos.Cashier));
+        order = await _pos.Send(new VoidItemsCommand(order.Id, [new VoidItem(Guid.NewGuid(), order.Lines[0].Id, 1)], "Burnt", StockOutcome.Waste, "1234", TestPos.Cashier));
+        order = await _pos.Send(new PayCommand(order.Id, [new NewPayment(Guid.NewGuid(), PaymentMethod.Cash, order.Totals.Total, null, null)], false, TestPos.Cashier));
+        await _pos.Send(new CloseShiftCommand(shift.Id, 1000, false, TestPos.Cashier));
+
+        var data = JsonDocument.Parse(_pos.Store.Queue.Items.Single(i => i.Kind == "day.closed").Payload).RootElement.GetProperty("data");
+        Assert.Equal([("6101-17", "Large", 1), ("9001", null, 1)],
+            data.GetProperty("soldItems").EnumerateArray().Select(i => (i.GetProperty("itemCode").GetString(), i.GetProperty("size").GetString(), i.GetProperty("quantity").GetInt32())));
+        var waste = data.GetProperty("waste").EnumerateArray().Single();
+        Assert.Equal(("6101-17", "Large", "Burnt"), (waste.GetProperty("itemCode").GetString(), waste.GetProperty("size").GetString(), waste.GetProperty("reason").GetString()));
+    }
 }
