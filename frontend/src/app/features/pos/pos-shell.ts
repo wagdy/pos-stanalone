@@ -1,7 +1,5 @@
 import { Component, computed, inject } from '@angular/core';
-import { toSignal } from '@angular/core/rxjs-interop';
-import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
-import { filter, map } from 'rxjs';
+import { RouterOutlet } from '@angular/router';
 import { AuthService } from '../../core/auth/auth.service';
 import { Permission, Permissions } from '../../core/auth/permissions';
 import { SideGroup, SideLayout, SideSection } from '../shared/side-layout';
@@ -26,12 +24,13 @@ const All: (SideSection & { permission: Permission })[] = [
 ];
 
 // The till's sections beside the page: the service (terminal, floor, checks, kitchen, captain), the
-// shift, and the setup a manager keeps. Each shows to those whose role works it.
+// shift, and the setup a manager keeps. Each shows to those whose role works it. The sidebar is
+// folded or open as the user leaves it, the same on every page.
 @Component({
   selector: 'app-pos-shell',
   imports: [RouterOutlet, SideLayout],
   template: `
-    <app-side-layout titleEn="Point of sale" titleAr="نقطة البيع" [sections]="sections()" [rail]="rail()">
+    <app-side-layout titleEn="Point of sale" titleAr="نقطة البيع" [sections]="sections()">
       <router-outlet />
     </app-side-layout>
   `,
@@ -39,16 +38,6 @@ const All: (SideSection & { permission: Permission })[] = [
 export class PosShell {
   private readonly auth = inject(AuthService);
   private readonly store = inject(PosStore);
-  private readonly router = inject(Router);
-  private readonly url = toSignal(
-    this.router.events.pipe(
-      filter((e) => e instanceof NavigationEnd),
-      map(() => this.router.url),
-    ),
-    { initialValue: this.router.url },
-  );
-  // The terminal and the floor want the width: the sections as a rail of icons beside them.
-  protected readonly rail = computed(() => /^\/pos\/(terminal|floor)/.test(this.url()));
 
   protected readonly sections = computed<SideSection[]>(() => {
     const open = this.store.open().length;

@@ -4,9 +4,7 @@ import { takeUntilDestroyed } from '@angular/core/rxjs-interop';
 import { FormsModule } from '@angular/forms';
 import { MatButtonModule } from '@angular/material/button';
 import { MatDialog } from '@angular/material/dialog';
-import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
-import { MatInputModule } from '@angular/material/input';
 import { MatMenuModule } from '@angular/material/menu';
 import { MatProgressBarModule } from '@angular/material/progress-bar';
 import { MatTooltipModule } from '@angular/material/tooltip';
@@ -25,11 +23,13 @@ import {
   OrderLine,
   OrderSummary,
   OrderType,
+  PaymentMethod,
   PosApi,
   Shift,
   lineStatusLabels,
   newId,
   orderTypeLabels,
+  tableTag,
 } from '../../../core/pos/pos.api';
 import { PrintService } from '../../../core/pos/print';
 import { Company } from '../../../core/settings/company';
@@ -58,15 +58,17 @@ import {
   VoidDialog,
 } from './dialogs';
 
-// The cashier's terminal (نقطة البيع): the checks open, the menu, and the check being worked. Items
-// go on as drafts and to the kitchen with Send to Kitchen (F4); more later go on an add-on ticket.
-// The bill prints for the guest (F8), the check is paid (F9), voided, split, moved or merged; the
-// customer's loyalty card is on the check. Every screen hears each change at once; what is done
-// while the server cannot be reached waits in this terminal's outbox and is shown as waiting.
+// The cashier's terminal (نقطة البيع), laid out as a register: the menu (the checks open in a strip
+// above it, folded or not as the cashier leaves it; the categories in their own bar; the tiles) and
+// the check being worked, its header (how it is served, the table and guests, the customer), its
+// lines, and its totals and keys docked at the foot. Items go on as drafts and to the kitchen with
+// Send to Kitchen (F4); more later go on an add-on ticket. The bill prints for the guest (F8), the
+// check is paid in cash or by card or any other way (F9), voided, split, moved or merged. Every
+// screen hears each change at once; what is done while the server cannot be reached waits in this
+// terminal's outbox and is shown as waiting.
 @Component({
   selector: 'app-terminal-page',
-  imports: [DatePipe, FormsModule, MatButtonModule, MatFormFieldModule, MatIconModule, MatInputModule, MatMenuModule, MatProgressBarModule,
-    MatTooltipModule, MoneyPipe, RouterLink],
+  imports: [DatePipe, FormsModule, MatButtonModule, MatIconModule, MatMenuModule, MatProgressBarModule, MatTooltipModule, MoneyPipe, RouterLink],
   templateUrl: './terminal-page.html',
   styleUrl: './terminal-page.scss',
 })
@@ -88,6 +90,7 @@ export class TerminalPage implements OnInit {
   readonly order = input<string | undefined>(undefined, { alias: 'order' });
 
   protected readonly typeLabels = orderTypeLabels;
+  protected readonly tableTag = tableTag;
   protected readonly statusLabels = lineStatusLabels;
   protected readonly types: OrderType[] = ['DineIn', 'Takeaway', 'Delivery'];
 
@@ -99,6 +102,8 @@ export class TerminalPage implements OnInit {
   protected readonly category = signal<string | null>(null);
   protected readonly search = signal('');
   protected readonly selectedLine = signal<string | null>(null);
+  // The strip of open checks above the menu, shown or folded: the cashier's choice, kept here.
+  protected readonly checksShown = signal(readChecksShown());
   protected readonly shift = signal<Shift | null | undefined>(undefined);
   protected redeemPoints: number | null = null;
 
@@ -122,11 +127,10 @@ export class TerminalPage implements OnInit {
   });
   protected readonly colorOf = computed(() => new Map(this.categories().map((c) => [c.id, c.color ?? '#4f46e5'])));
 
-  // The open checks, by how they are served.
-  protected readonly openByType = computed(() => {
-    const open = [...this.store.open(), ...this.pendingChecks()];
-    return this.types.map((type) => ({ type, checks: open.filter((o) => o.type === type) }));
-  });
+  // The open checks, and those opened here waiting for the server, the oldest first.
+  protected readonly openChecks = computed(() =>
+    [...this.store.open(), ...this.pendingChecks()].sort((a, b) => a.openedAtUtc.localeCompare(b.openedAtUtc)),
+  );
 
   // What this terminal did on the check that waits to reach the server.
   protected readonly waiting = computed(() => {
@@ -161,6 +165,8 @@ export class TerminalPage implements OnInit {
 
   protected readonly drafts = computed(() => this.current()?.lines.filter((l) => l.status === 'Draft' && l.quantity > 0) ?? []);
   protected readonly liveLines = computed(() => this.current()?.lines.filter((l) => l.quantity > 0) ?? []);
+  // The line picked on the check, for Void in Discount / Void.
+  protected readonly selected = computed(() => this.liveLines().find((l) => l.id === this.selectedLine()) ?? null);
   // Nothing reached the kitchen and nothing was paid: the check may simply be cancelled.
   protected readonly canCancel = computed(() => {
     const order = this.current();
@@ -334,7 +340,8 @@ export class TerminalPage implements OnInit {
     }
   }
 
-  protected async pay(): Promise<void> {
+  // method: how it is to be paid (Pay cash, Pay card); any way, or several, otherwise (F9).
+  protected async pay(method?: PaymentMethod): Promise<void> {
     const order = this.current();
     if (!order || this.closed() || !this.canSettle()) return;
     if (!this.shift()) {
@@ -342,7 +349,7 @@ export class TerminalPage implements OnInit {
       return;
     }
     const choice = await firstValueFrom(
-      this.dialog.open<PayDialog, PayData, PayChoice>(PayDialog, { data: { order }, width: '620px', maxWidth: '96vw' }).afterClosed(),
+      this.dialog.open<PayDialog, PayData, PayChoice>(PayDialog, { data: { order, method }, width: '620px', maxWidth: '96vw' }).afterClosed(),
     );
     if (!choice?.payments.length) return;
     const paid = await this.run(() => this.commands.pay(order, choice.payments, choice.printReceipt), 'The payment could not be taken.');
@@ -381,6 +388,12 @@ export class TerminalPage implements OnInit {
       'The item could not be voided.',
     );
     if (voided && line.status !== 'Draft') this.notify.info('Voided: a VOID ticket went to the kitchen. · أُرسل بون إلغاء للمطبخ.');
+  }
+
+  // Discount / Void → Void: the line picked on the check.
+  protected async voidSelected(): Promise<void> {
+    const line = this.selected();
+    if (line) await this.voidLine(line);
   }
 
   protected async split(): Promise<void> {
@@ -539,6 +552,22 @@ export class TerminalPage implements OnInit {
     void this.router.navigate(['/pos/floor']);
   }
 
+  protected toggleChecks(): void {
+    const shown = !this.checksShown();
+    this.checksShown.set(shown);
+    try {
+      localStorage.setItem(ChecksShownKey, shown ? '1' : '0');
+    } catch {
+      // Kept for this page only.
+    }
+  }
+
+  // A check in the strip: its table (T2·B), or its number (#12); one opened here, not yet numbered.
+  protected where(o: OrderSummary): string {
+    const at = o.tableLabel ? tableTag(o.tableLabel) : o.number ? `#${o.number}` : 'New';
+    return o.checkLabel ? `${at}·${o.checkLabel}` : at;
+  }
+
   protected age(utc: string): string {
     const minutes = Math.max(0, Math.round((Date.now() - new Date(utc).getTime()) / 60000));
     return minutes < 60 ? `${minutes}m` : `${Math.floor(minutes / 60)}h ${minutes % 60}m`;
@@ -621,6 +650,16 @@ export class TerminalPage implements OnInit {
     } finally {
       this.busy.set(false);
     }
+  }
+}
+
+const ChecksShownKey = 'pos.terminalChecksShown';
+
+function readChecksShown(): boolean {
+  try {
+    return localStorage.getItem(ChecksShownKey) !== '0';
+  } catch {
+    return true;
   }
 }
 

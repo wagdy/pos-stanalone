@@ -227,6 +227,8 @@ export class VoidDialog {
 
 export interface PayData {
   order: Order;
+  // How it is to be paid when the dialog opens (Pay cash, Pay card); cash otherwise.
+  method?: PaymentMethod;
 }
 
 export interface PayChoice {
@@ -324,7 +326,7 @@ export class PayDialog {
   protected readonly remaining = computed(() => round(this.data.order.totals.due - this.taken().reduce((n, p) => n + p.amount, 0)));
   protected readonly share = computed(() => Math.ceil((this.data.order.totals.total / (this.data.order.splitWays ?? 1)) * 100) / 100);
 
-  protected method: PaymentMethod = 'Cash';
+  protected method: PaymentMethod = this.data.method ?? 'Cash';
   protected amount: number | null = this.data.order.totals.due;
   protected tendered: number | null = null;
   protected reference = '';

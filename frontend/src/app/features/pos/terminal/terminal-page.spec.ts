@@ -90,6 +90,53 @@ describe('the cashier’s terminal', () => {
     open.mockReset();
     notify.info.mockReset();
     notify.error.mockReset();
+    localStorage.removeItem('pos.terminalChecksShown');
+  });
+
+  it('lists the open checks in a strip above the menu, folded to their count when the cashier wants the room', async () => {
+    const { el, settle } = await render();
+    const summary = { status: 'Open' as const, guests: 2, openedBy: 'Karim', customerName: null, due: 0, items: 1, paidAtUtc: null, checkLabel: null };
+    (TestBed.inject(PosStore) as unknown as { open: { set(checks: unknown[]): void } }).open.set([
+      { ...summary, id: 'o-2', number: 14, type: 'Takeaway', tableLabel: null, openedAtUtc: '2026-11-09T12:05:00Z', total: 50, hasDrafts: true },
+      { ...summary, id: 'o-1', number: 12, type: 'DineIn', tableLabel: '1', openedAtUtc: '2026-11-09T12:00:00Z', total: 180, hasDrafts: false },
+    ]);
+    await settle();
+
+    // The oldest first; a table by its tag, a takeaway by its number; one with items not sent marked.
+    expect([...el.querySelectorAll('.check-chip .where')].map(text)).toEqual(['T1', '#14']);
+    expect(el.querySelectorAll('.check-chip')[1].querySelector('.dot')).not.toBeNull();
+    expect(text(el.querySelector('.strip-toggle .badge')!)).toBe('2');
+
+    el.querySelector<HTMLButtonElement>('.strip-toggle')!.click();
+    await settle();
+    expect(el.querySelectorAll('.check-chip').length).toBe(0);
+    expect(localStorage.getItem('pos.terminalChecksShown')).toBe('0');
+  });
+
+  it('changes a draft line by its stepper, and pays in cash or by card from the register’s keys', async () => {
+    const draft = anOrder({ lines: [aLine({ status: 'Draft', quantity: 2 })] });
+    commands.open.mockResolvedValue(draft);
+    commands.add.mockResolvedValue(draft);
+    commands.change.mockResolvedValue(anOrder({ lines: [aLine({ status: 'Draft', quantity: 3, total: 540 })] }));
+    const { el, settle, button } = await render();
+    el.querySelector<HTMLButtonElement>('.item')!.click();
+    await settle();
+
+    el.querySelector<HTMLButtonElement>('.line button[aria-label="One more"]')!.click();
+    await settle();
+    expect(commands.change).toHaveBeenCalledWith(draft, 'line-1', 3, null);
+    expect(text(el.querySelector('.line .qty')!)).toBe('3×');
+    // The stepper does not pick the line.
+    expect(el.querySelector('.line.on')).toBeNull();
+
+    open.mockReturnValue({ afterClosed: () => of(undefined) });
+    button('Pay card').click();
+    await settle();
+    expect(open.mock.lastCall![1].data.method).toBe('Card');
+    button('Pay cash').click();
+    await settle();
+    expect(open.mock.lastCall![1].data.method).toBe('Cash');
+    expect(commands.pay).not.toHaveBeenCalled();
   });
 
   it('shows the menu by category, each item with its code and price', async () => {

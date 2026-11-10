@@ -53,22 +53,38 @@ A PIN is four digits no one else has, kept only as a keyed hash. A manager's PIN
 
 ## The screens
 
-- **Terminal** (`/pos/terminal`): the open checks by type, the menu by category (search by name or
-  code, `/`), and the check. Keys: `F2` a takeaway, `F4` send to the kitchen, `F8` print the
-  check, `F9` pay. Customer & loyalty bar, split, transfer, merge, discount, cancel.
-- **Floor plan** (`/pos/floor`): each zone's tables where they stand, coloured Available /
-  Occupied / Bill printed, with each check's total, guests and age.
-- **Checks & receipts** (`/pos/orders`): the day's checks with their items, voids, payments and
-  kitchen tickets; any of them previewed at 80 mm and printed again.
-- **Kitchen screen** (`/pos/kds`): tickets oldest first, all stations or one, ageing green →
-  amber (10 min) → red (20 min); ADD-ON, VOID and TABLE MOVED banners; bump and recall; a chime.
+- **The sidebar**: the till's sections, open (each on one line, its Arabic beside it) or folded to
+  its icons (each named on hover) with the « / » at its top; it stays as the user leaves it on
+  every page, kept in that browser.
+- **Terminal** (`/pos/terminal`): laid out as a register. Above the menu, a strip of the open
+  checks (T2, #14…, folded to their count when the room is wanted), the search (by name or code,
+  `/`) and the categories in their own bar; the tiles below it, each with its code, name, a dot of
+  its category's colour and its price. The check beside it: how the next check is served (Dine-in
+  · Takeaway · Delivery), the table, guests and the customer & loyalty bar; the lines, a draft
+  one with its − / + stepper, each with its size, modifiers and note and whether it is sent (and
+  on which KOT); and docked at its foot the totals, then Send to kitchen (`F4`), Print check
+  (`F8`), Split / Transfer, Discount / Void, and Pay cash, Pay card and More (any other or a split
+  payment, `F9`; reprint; next check). `F2` opens a takeaway.
+- **Floor plan** (`/pos/floor`): each zone's tables where they stand on a dotted canvas, square and
+  round ones as wide as they are tall and a long one two places wide, drawn smaller (to 72%) when
+  the room is wider than the screen. Each shows its number, its state (Available / Occupied / Bill
+  printed), and for an occupied one its checks' total, guests, how long it has sat (amber past 45
+  minutes, red past 90) and who opened it.
+- **Checks & receipts** (`/pos/orders`, or `/pos/checks`): the day's checks; the one picked shown
+  beside the list as a slip of thermal paper with its items, voids, totals and payments, and any of
+  them, or its kitchen tickets, previewed at 80 mm and printed again.
+- **Kitchen screen** (`/pos/kds`): a dark slate board (or a light one) of tickets in columns, oldest
+  first, all stations or one; each station's items under its header, a timer going green → amber
+  (10 min) → red (20 min); ADD-ON, VOID and TABLE MOVED banners; Bump the width of the ticket, and
+  recall; a chime.
 - **Captain** (`/pos/captain`): zones and tables, a table opened with its guests, items with
   sizes, modifiers and kitchen notes, Send to kitchen and Bill.
 - **Shift & Z report** (`/pos/shift`): open with a float, paid-outs (expense, staff advance,
   driver), the live X report, close with the cash counted, past Z reports, the Costing sheet,
   clock in/out by PIN.
-- **Setup**: Menu (items, categories, kitchen stations), Tables, Printers, POS settings,
-  Integrations. **Staff** and **Company** settings sit in the top bar.
+- **Setup**: Menu (items, categories, kitchen stations), Tables (zones, each field named; a table
+  put in its place by dragging it on the plan, or picking it and tapping a cell, saved there at
+  once), Printers, POS settings, Integrations. **Staff** and **Company** settings sit in the top bar.
 
 ## Kitchen workflow
 

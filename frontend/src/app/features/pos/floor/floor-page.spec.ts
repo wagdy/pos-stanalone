@@ -45,13 +45,25 @@ describe('the floor plan', () => {
       await fixture.whenStable();
       fixture.detectChanges();
     };
-    return { el: fixture.nativeElement as HTMLElement, navigate, settle };
+    return { el: fixture.nativeElement as HTMLElement, fixture, navigate, settle };
   }
 
   beforeEach(() => {
     commands.open.mockReset();
     markOpenedOffline.mockReset();
     open.mockReset();
+  });
+
+  it('lays the plan out in cells as wide as they are tall, a long table two of them, the empty columns and rows thin aisles', async () => {
+    const { fixture } = await render();
+    const layout = (fixture.componentInstance as unknown as { layout: () => { columns: string; rows: string; width: number } }).layout();
+    // Tables at columns 0, 3 and 6 (a long one, to 7), rows 0 and 1.
+    expect(layout.columns.split(' ')).toEqual([
+      'var(--cell)', 'var(--gap-cell)', 'var(--gap-cell)', 'var(--cell)', 'var(--gap-cell)', 'var(--gap-cell)', 'var(--cell)', 'var(--cell)',
+    ]);
+    expect(layout.rows.split(' ')).toEqual(['var(--cell)', 'var(--cell)']);
+    // Four cells of 148, four aisles of 16, seven gaps of 12.
+    expect(layout.width).toBe(4 * 148 + 4 * 16 + 7 * 12);
   });
 
   it('shows a zone’s tables where they stand, by state, with what each check comes to', async () => {

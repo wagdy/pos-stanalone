@@ -1,85 +1,104 @@
 <div class="terminal">
-  <!-- The checks open: tables, takeaways and deliveries -->
-  <aside class="checks" aria-label="Open checks">
-    <div class="new">
-      @for (type of types; track type) {
-        <button mat-flat-button class="new-check" (click)="newCheck(type)" [disabled]="busy()" [attr.aria-label]="'New ' + typeLabels[type].en + ' check'">
-          <mat-icon>{{ typeLabels[type].icon }}</mat-icon>
-          <span>{{ typeLabels[type].en }}<small class="ar">{{ typeLabels[type].ar }}</small></span>
-        </button>
+  <!-- The menu: the checks open in a strip, the search, the categories in their own bar, the tiles -->
+  <section class="menu" aria-label="Menu">
+    <div class="open-strip">
+      <button type="button" class="strip-toggle" (click)="toggleChecks()" [attr.aria-expanded]="checksShown()" aria-controls="open-checks"
+        [matTooltip]="checksShown() ? 'Hide the open checks · إخفاء' : 'Show the open checks · إظهار'">
+        <mat-icon>receipt_long</mat-icon>
+        <span class="strip-title">Open <span class="ar">مفتوح</span></span>
+        <span class="badge" [class.zero]="!openChecks().length">{{ openChecks().length }}</span>
+        <mat-icon class="chev">{{ checksShown() ? 'expand_less' : 'expand_more' }}</mat-icon>
+      </button>
+      @if (checksShown()) {
+        <div id="open-checks" class="chips" aria-label="Open checks">
+          @for (o of openChecks(); track o.id) {
+            <button type="button" class="check-chip" [class.on]="current()?.id === o.id" [class.billed]="o.status === 'BillPrinted'" (click)="select(o.id)"
+              [attr.aria-label]="typeLabels[o.type].en + ' ' + where(o) + ', ' + (o.total | money)">
+              <mat-icon>{{ typeLabels[o.type].icon }}</mat-icon>
+              <span class="where">{{ where(o) }}</span>
+              <span class="amount">{{ o.total | money }}</span>
+              <span class="age">{{ age(o.openedAtUtc) }}</span>
+              @if (o.hasDrafts) {
+                <span class="dot" matTooltip="Items not sent yet · لم يُرسل"></span>
+              }
+            </button>
+          } @empty {
+            <span class="muted empty">No check open. Tap a table or an item to start. · لا توجد شيكات مفتوحة.</span>
+          }
+        </div>
+      } @else {
+        <span class="chips-folded muted">{{ openChecks().length ? 'Tap to show them · اضغط للعرض' : 'None open · لا يوجد' }}</span>
+      }
+      @if (shift() === null && canSettle()) {
+        <a class="shift-warn" routerLink="/pos/shift" matTooltip="Open the shift to take payments · افتح الوردية"><mat-icon>lock_clock</mat-icon> No shift · لا وردية</a>
       }
     </div>
-    @if (shift() === null && canSettle()) {
-      <a class="shift-warn" routerLink="/pos/shift"><mat-icon>lock_clock</mat-icon> No shift open: open it to take payments · افتح الوردية</a>
-    }
-    @for (group of openByType(); track group.type) {
-      @if (group.checks.length) {
-        <p class="group">{{ typeLabels[group.type].en }} <span class="ar">{{ typeLabels[group.type].ar }}</span> <span class="count">{{ group.checks.length }}</span></p>
-        @for (o of group.checks; track o.id) {
-          <button type="button" class="check-row" [class.on]="current()?.id === o.id" [class.billed]="o.status === 'BillPrinted'" (click)="select(o.id)">
-            <span class="where">{{ o.tableLabel ? 'T' + o.tableLabel : '#' + o.number }}{{ o.checkLabel ? '·' + o.checkLabel : '' }}</span>
-            <span class="who">{{ o.customerName ?? o.openedBy }} <small class="muted">{{ age(o.openedAtUtc) }}</small></span>
-            <span class="amount">{{ o.total | money }}</span>
-            @if (o.hasDrafts) {
-              <span class="dot" matTooltip="Items not sent yet · لم يُرسل"></span>
-            }
-          </button>
-        }
-      }
-    }
-    @if (!store.open().length) {
-      <p class="muted empty">No check open. Tap a table or an item to start. · لا توجد شيكات مفتوحة.</p>
-    }
-  </aside>
 
-  <!-- The menu -->
-  <section class="menu" aria-label="Menu">
     <div class="menu-bar">
-      <mat-form-field subscriptSizing="dynamic" class="search">
-        <mat-icon matPrefix>search</mat-icon>
-        <input #searchBox matInput placeholder="Search items or code ( / ) · بحث" [ngModel]="search()" (ngModelChange)="search.set($event)" aria-label="Search the menu" />
-      </mat-form-field>
+      <label class="search">
+        <mat-icon>search</mat-icon>
+        <input #searchBox type="search" placeholder="Search items or code ( / ) · بحث" [ngModel]="search()" (ngModelChange)="search.set($event)"
+          aria-label="Search the menu" />
+      </label>
       @if (store.stale()) {
         <span class="tag warn" matTooltip="The server could not be asked: this terminal's copy">Offline menu · نسخة محلية</span>
       }
     </div>
+
     <div class="cats" role="tablist" aria-label="Categories">
       <button type="button" class="cat" [class.on]="!category()" (click)="category.set(null)" role="tab" [attr.aria-selected]="!category()">All · الكل</button>
       @for (c of categories(); track c.id) {
         <button type="button" class="cat" [class.on]="category() === c.id" [style.--cat]="c.color" (click)="category.set(c.id)" role="tab"
-          [attr.aria-selected]="category() === c.id">{{ c.name }} <span class="ar">{{ c.nameAr }}</span></button>
+          [attr.aria-selected]="category() === c.id"><span class="swatch" aria-hidden="true"></span>{{ c.name }} <span class="ar">{{ c.nameAr }}</span></button>
       }
     </div>
+
     @if (!store.menu()) {
       <mat-progress-bar mode="indeterminate" />
     }
+    <div class="items-scroll">
     <div class="items">
       @for (item of items(); track item.id) {
         <button type="button" class="item" [style.--cat]="colorOf().get(item.categoryId)" (click)="addItem(item)" [disabled]="busy()" [attr.aria-label]="'Add ' + item.name">
-          <span class="code">{{ item.code }}</span>
+          <span class="code">#{{ item.code }}</span>
+          <span class="cat-dot" aria-hidden="true"></span>
           <strong>{{ item.name }}</strong>
-          <span class="ar">{{ item.nameAr }}</span>
+          @if (item.nameAr && item.nameAr !== item.name) {
+            <span class="ar" dir="rtl">{{ item.nameAr }}</span>
+          }
           <span class="price">{{ item.sizes.length ? 'from ' : '' }}{{ (item.sizes[0]?.price ?? item.price) | money }}</span>
         </button>
       } @empty {
         @if (store.menu()) {
-          <p class="muted">Nothing on the menu matches. · لا توجد أصناف.</p>
+          <p class="muted nothing">Nothing on the menu matches. · لا توجد أصناف.</p>
         }
       }
     </div>
+    </div>
   </section>
 
-  <!-- The check -->
+  <!-- The check: its header, its lines, and the totals and keys docked at the foot -->
   <section class="check" aria-label="The check">
+    <div class="modes" role="group" aria-label="New check">
+      @for (type of types; track type) {
+        <button type="button" class="mode" [class.on]="!closed() && current()?.type === type" (click)="newCheck(type)" [disabled]="busy()"
+          [attr.aria-label]="'New ' + typeLabels[type].en + ' check'" [matTooltip]="'New ' + typeLabels[type].en + ' check' + (type === 'Takeaway' ? ' (F2)' : '')">
+          <span class="mode-en"><mat-icon>{{ typeLabels[type].icon }}</mat-icon>{{ typeLabels[type].en }}</span>
+          <span class="mode-ar">{{ typeLabels[type].ar }}</span>
+        </button>
+      }
+    </div>
+
     @if (current(); as o) {
       <header class="check-head">
-        <div>
+        <div class="title-row">
           <h2>
-            <mat-icon>{{ typeLabels[o.type].icon }}</mat-icon>
             @if (o.tableLabel) {
-              Table {{ o.tableLabel }}{{ o.checkLabel ? ' · Check ' + o.checkLabel : '' }}
+              <span class="table-badge">{{ tableTag(o.tableLabel) }}</span>
+              <span class="title">Table {{ o.tableLabel }}{{ o.checkLabel ? ' · Check ' + o.checkLabel : '' }}</span>
             } @else {
-              {{ typeLabels[o.type].en }}
+              <mat-icon>{{ typeLabels[o.type].icon }}</mat-icon>
+              <span class="title">{{ typeLabels[o.type].en }}</span>
             }
             @if (o.number) {
               <span class="num">#{{ o.number }}</span>
@@ -87,165 +106,231 @@
               <span class="tag warn">Waiting to sync · بانتظار المزامنة</span>
             }
           </h2>
-          <small class="muted">{{ o.openedBy }} · {{ o.openedAtUtc | date: 'HH:mm' }}
-            @if (o.type === 'DineIn') {
-              · <button class="link" (click)="setGuests(-1)" aria-label="One guest less">−</button> {{ o.guests }} guests
-              <button class="link" (click)="setGuests(1)" aria-label="One guest more">+</button>
-            }
-          </small>
+          <span class="status" [class]="o.status">{{ o.status === 'BillPrinted' ? 'Bill printed · طُبع الشيك' : o.status }}</span>
         </div>
-        <span class="status" [class]="o.status">{{ o.status === 'BillPrinted' ? 'Bill printed · طُبع الشيك' : o.status }}</span>
-      </header>
+        <div class="meta">
+          <span><mat-icon>person</mat-icon>{{ o.openedBy }}</span>
+          <span><mat-icon>schedule</mat-icon>{{ o.openedAtUtc | date: 'HH:mm' }}</span>
+          @if (o.type === 'DineIn') {
+            <span class="guests">
+              <button type="button" class="mini" (click)="setGuests(-1)" [disabled]="closed()" aria-label="One guest less">−</button>
+              <mat-icon>groups</mat-icon>{{ o.guests }} guests
+              <button type="button" class="mini" (click)="setGuests(1)" [disabled]="closed()" aria-label="One guest more">+</button>
+            </span>
+          }
+        </div>
 
-      <!-- Customer & loyalty bar -->
-      <div class="loyalty">
-        @if (o.customer?.name) {
-          <mat-icon>loyalty</mat-icon>
-          <div class="who">
-            <strong>{{ o.customer!.name }}</strong> <span class="muted">{{ o.customer!.phone }}</span>
-            @if (o.customer!.points != null) {
-              <span class="points"><mat-icon>stars</mat-icon> {{ o.customer!.points }} pts{{ o.customer!.tier ? ' · ' + o.customer!.tier : '' }}</span>
+        <!-- Customer & loyalty bar -->
+        <div class="loyalty" [class.has]="!!o.customer?.name">
+          @if (o.customer?.name) {
+            <mat-icon>loyalty</mat-icon>
+            <div class="who">
+              <strong>{{ o.customer!.name }}</strong> <span class="muted">{{ o.customer!.phone }}</span>
+              @if (o.customer!.points != null) {
+                <span class="points"><mat-icon>stars</mat-icon> {{ o.customer!.points }} pts{{ o.customer!.tier ? ' · ' + o.customer!.tier : '' }}</span>
+              }
+            </div>
+            @if (canSettle() && o.customer!.id && !closed()) {
+              <input class="redeem" type="number" min="0" [(ngModel)]="redeemPoints" placeholder="Points" aria-label="Points to redeem" />
+              <button mat-stroked-button class="small" (click)="redeem()" [disabled]="redeemPoints == null">Redeem · استبدال</button>
             }
+            @if (!closed()) {
+              <button mat-icon-button class="drop" (click)="dropCustomer()" aria-label="Take the customer off"><mat-icon>close</mat-icon></button>
+            }
+          } @else {
+            <button type="button" class="find-customer" (click)="customer()" [disabled]="closed()">
+              <mat-icon>person_search</mat-icon>
+              <span>Customer &amp; loyalty <span class="ar">تسجيل عميل / نقاط الولاء</span></span>
+              <mat-icon class="chev">chevron_right</mat-icon>
+            </button>
+          }
+        </div>
+
+        @if (o.type === 'Delivery' && !closed()) {
+          <div class="delivery">
+            <input [value]="o.customer?.name ?? ''" (change)="saveDelivery('customerName', $any($event.target).value)" placeholder="Name · الاسم" aria-label="Delivery customer name" />
+            <input [value]="o.customer?.phone ?? ''" (change)="saveDelivery('customerPhone', $any($event.target).value)" placeholder="Phone · الهاتف" aria-label="Delivery phone" />
+            <input class="wide" [value]="o.deliveryAddress ?? ''" (change)="saveDelivery('deliveryAddress', $any($event.target).value)" placeholder="Address · العنوان" aria-label="Delivery address" />
+            <input [value]="o.driverName ?? ''" (change)="saveDelivery('driverName', $any($event.target).value)" placeholder="Driver · السائق" aria-label="Driver" />
           </div>
-          @if (canSettle() && o.customer!.id && !closed()) {
-            <input class="redeem" type="number" min="0" [(ngModel)]="redeemPoints" placeholder="Points" aria-label="Points to redeem" />
-            <button mat-stroked-button (click)="redeem()" [disabled]="redeemPoints == null">Redeem · استبدال</button>
-          }
-          @if (!closed()) {
-            <button mat-icon-button (click)="dropCustomer()" aria-label="Take the customer off"><mat-icon>close</mat-icon></button>
-          }
-        } @else {
-          <button mat-stroked-button class="find-customer" (click)="customer()" [disabled]="closed()"><mat-icon>person_search</mat-icon>
-            Customer &amp; loyalty · تسجيل عميل / نقاط الولاء</button>
         }
-      </div>
-
-      @if (o.type === 'Delivery' && !closed()) {
-        <div class="delivery">
-          <input [value]="o.customer?.name ?? ''" (change)="saveDelivery('customerName', $any($event.target).value)" placeholder="Name · الاسم" aria-label="Delivery customer name" />
-          <input [value]="o.customer?.phone ?? ''" (change)="saveDelivery('customerPhone', $any($event.target).value)" placeholder="Phone · الهاتف" aria-label="Delivery phone" />
-          <input class="wide" [value]="o.deliveryAddress ?? ''" (change)="saveDelivery('deliveryAddress', $any($event.target).value)" placeholder="Address · العنوان" aria-label="Delivery address" />
-          <input [value]="o.driverName ?? ''" (change)="saveDelivery('driverName', $any($event.target).value)" placeholder="Driver · السائق" aria-label="Driver" />
-        </div>
-      }
+      </header>
 
       @if (loading()) {
         <mat-progress-bar mode="indeterminate" />
       }
 
-      <ul class="lines" aria-label="Items on the check">
-        @for (l of liveLines(); track l.id) {
-          <li class="line" [class]="l.status" [class.waiting]="waitingLineIds().has(l.id)" [class.on]="selectedLine() === l.id"
-            (click)="selectedLine.set(selectedLine() === l.id ? null : l.id)">
-            <span class="qty">{{ l.quantity }}×</span>
-            <span class="name">
-              <strong>{{ l.name }}</strong>{{ l.sizeName ? ' (' + l.sizeName + ')' : '' }}
-              @if (l.modifiers) {
-                <small class="mods">+ {{ l.modifiers }}</small>
-              }
-              @if (l.notes) {
-                <small class="note"><mat-icon inline>sticky_note_2</mat-icon> {{ l.notes }}</small>
-              }
-            </span>
-            <span class="state" [attr.aria-label]="statusLabels[l.status].en">
-              {{ statusLabels[l.status].en }}{{ l.kitchenTicketNumber ? ' · KOT ' + l.kitchenTicketNumber : '' }}
-              @if (waitingLineIds().has(l.id)) {
-                · Waiting to sync · بانتظار المزامنة
-              }
-            </span>
-            <span class="total">{{ l.total | money }}</span>
-            @if (selectedLine() === l.id && !closed()) {
-              <span class="line-actions" (click)="$event.stopPropagation()">
-                @if (l.status === 'Draft') {
-                  <button mat-icon-button (click)="changeQuantity(l, -1)" aria-label="One less"><mat-icon>remove</mat-icon></button>
-                  <button mat-icon-button (click)="changeQuantity(l, 1)" aria-label="One more"><mat-icon>add</mat-icon></button>
+      <div class="scroll">
+        <ul class="lines" aria-label="Items on the check">
+          @for (l of liveLines(); track l.id) {
+            <li class="line" [class]="l.status" [class.waiting]="waitingLineIds().has(l.id)" [class.on]="selectedLine() === l.id"
+              (click)="selectedLine.set(selectedLine() === l.id ? null : l.id)">
+              <span class="stepper" [class.live]="l.status === 'Draft' && !closed()" (click)="$event.stopPropagation()">
+                @if (l.status === 'Draft' && !closed()) {
+                  <button type="button" class="step" (click)="changeQuantity(l, -1)" [disabled]="busy()" aria-label="One less">−</button>
                 }
-                <button mat-stroked-button class="void" (click)="voidLine(l)"><mat-icon>block</mat-icon>
-                  {{ l.status === 'Draft' ? 'Remove · حذف' : 'Void · إلغاء' }}</button>
+                <span class="qty">{{ l.quantity }}×</span>
+                @if (l.status === 'Draft' && !closed()) {
+                  <button type="button" class="step" (click)="changeQuantity(l, 1)" [disabled]="busy()" aria-label="One more">+</button>
+                }
               </span>
+              <span class="name">
+                <strong>{{ l.name }}</strong>
+                @if (l.sizeName || l.modifiers || l.notes) {
+                  <span class="chips">
+                    @if (l.sizeName) {
+                      <span class="chip size">{{ l.sizeName }}</span>
+                    }
+                    @if (l.modifiers) {
+                      <span class="chip mods">+ {{ l.modifiers }}</span>
+                    }
+                    @if (l.notes) {
+                      <span class="chip note"><mat-icon inline>sticky_note_2</mat-icon> {{ l.notes }}</span>
+                    }
+                  </span>
+                }
+              </span>
+              <span class="total">{{ l.total | money }}</span>
+              <span class="state" [attr.aria-label]="statusLabels[l.status].en">
+                {{ statusLabels[l.status].en }}{{ l.kitchenTicketNumber ? ' · KOT ' + l.kitchenTicketNumber : '' }}
+                @if (waitingLineIds().has(l.id)) {
+                  · Waiting to sync · بانتظار المزامنة
+                }
+              </span>
+              @if (selectedLine() === l.id && !closed()) {
+                <span class="line-actions" (click)="$event.stopPropagation()">
+                  <button mat-stroked-button class="void" (click)="voidLine(l)"><mat-icon>block</mat-icon>
+                    {{ l.status === 'Draft' ? 'Remove · حذف' : 'Void · إلغاء' }}</button>
+                </span>
+              }
+            </li>
+          }
+          @if (!liveLines().length) {
+            <li class="muted empty">Tap items on the menu to add them. · اضغط على الأصناف لإضافتها.</li>
+          }
+        </ul>
+
+        @if (o.voids.length) {
+          <details class="voids">
+            <summary>{{ o.voids.length }} voided · ملغي</summary>
+            @for (v of o.voids; track v.id) {
+              <div><span class="tag" [class.bad]="v.kind === 'AfterKitchen'">{{ v.kind === 'AfterKitchen' ? 'After kitchen' : 'Before kitchen' }}</span>
+                {{ v.quantity }}× {{ v.itemName }} · {{ v.amount | money }}{{ v.reason ? ' · ' + v.reason : '' }}{{ v.authorizedBy ? ' · ' + v.authorizedBy : '' }}</div>
             }
-          </li>
+          </details>
         }
-        @if (!liveLines().length) {
-          <li class="muted empty">Tap items on the menu to add them. · اضغط على الأصناف لإضافتها.</li>
-        }
-      </ul>
+      </div>
 
-      @if (o.voids.length) {
-        <details class="voids">
-          <summary>{{ o.voids.length }} voided · ملغي</summary>
-          @for (v of o.voids; track v.id) {
-            <div><span class="tag" [class.bad]="v.kind === 'AfterKitchen'">{{ v.kind === 'AfterKitchen' ? 'After kitchen' : 'Before kitchen' }}</span>
-              {{ v.quantity }}× {{ v.itemName }} · {{ v.amount | money }}{{ v.reason ? ' · ' + v.reason : '' }}{{ v.authorizedBy ? ' · ' + v.authorizedBy : '' }}</div>
+      <footer class="dock">
+        <dl class="totals">
+          <div><dt>Subtotal · الإجمالي</dt><dd>{{ o.totals.gross | money }}</dd></div>
+          @if (o.totals.lineDiscounts + o.totals.billDiscount > 0) {
+            <div><dt>Discount · خصم{{ o.discountReason ? ' (' + o.discountReason + ')' : '' }}</dt><dd>−{{ o.totals.lineDiscounts + o.totals.billDiscount | money }}</dd></div>
           }
-        </details>
-      }
-
-      <dl class="totals">
-        <div><dt>Subtotal · الإجمالي</dt><dd>{{ o.totals.gross | money }}</dd></div>
-        @if (o.totals.lineDiscounts + o.totals.billDiscount > 0) {
-          <div><dt>Discount · خصم{{ o.discountReason ? ' (' + o.discountReason + ')' : '' }}</dt><dd>−{{ o.totals.lineDiscounts + o.totals.billDiscount | money }}</dd></div>
-        }
-        @if (o.totals.redemption > 0) {
-          <div><dt>Points · نقاط ({{ o.pointsRedeemed }})</dt><dd>−{{ o.totals.redemption | money }}</dd></div>
-        }
-        @if (o.totals.service > 0) {
-          <div><dt>Service {{ o.servicePercent }}% · خدمة</dt><dd>{{ o.totals.service | money }}</dd></div>
-        }
-        <div><dt>VAT {{ o.taxPercent }}% · ضريبة</dt><dd>{{ o.totals.tax | money }}</dd></div>
-        <div class="grand"><dt>Total · الإجمالي</dt><dd>{{ o.totals.total | money }}</dd></div>
-        @if (o.totals.paid > 0) {
-          <div><dt>Paid · المدفوع</dt><dd>{{ o.totals.paid | money }}</dd></div>
-          <div class="due"><dt>Due · المتبقي</dt><dd>{{ o.totals.due | money }}</dd></div>
-        }
-        @if (o.splitWays) {
-          <div><dt>{{ o.splitWays }} guests · لكل فرد</dt><dd>{{ o.totals.total / o.splitWays | money }}</dd></div>
-        }
-      </dl>
-
-      @if (!closed()) {
-        <div class="actions">
-          <button mat-flat-button class="send" (click)="send()" [disabled]="busy() || !drafts().length">
-            <mat-icon>soup_kitchen</mat-icon> Send to kitchen <span class="ar">إرسال للمطبخ</span> <kbd>F4</kbd>
-          </button>
-          <button mat-stroked-button (click)="printBill()" [disabled]="busy() || !liveLines().length"><mat-icon>receipt</mat-icon> Print check <span class="ar">طباعة الشيك</span> <kbd>F8</kbd></button>
-          @if (canSettle()) {
-            <button mat-flat-button class="pay" (click)="pay()" [disabled]="busy() || !liveLines().length"><mat-icon>point_of_sale</mat-icon> Pay <span class="ar">دفع</span> <kbd>F9</kbd></button>
+          @if (o.totals.redemption > 0) {
+            <div><dt>Points · نقاط ({{ o.pointsRedeemed }})</dt><dd>−{{ o.totals.redemption | money }}</dd></div>
           }
-          <button mat-stroked-button [matMenuTriggerFor]="more" aria-label="More"><mat-icon>more_horiz</mat-icon> More · المزيد</button>
-          <mat-menu #more="matMenu">
+          @if (o.totals.service > 0) {
+            <div><dt>Service {{ o.servicePercent }}% · خدمة</dt><dd>{{ o.totals.service | money }}</dd></div>
+          }
+          <div><dt>VAT {{ o.taxPercent }}% · ضريبة</dt><dd>{{ o.totals.tax | money }}</dd></div>
+          <div class="grand"><dt>Total <span class="ar">الإجمالي</span></dt><dd>{{ o.totals.total | money }}</dd></div>
+          @if (o.totals.paid > 0) {
+            <div><dt>Paid · المدفوع</dt><dd>{{ o.totals.paid | money }}</dd></div>
+            <div class="due"><dt>Due · المتبقي</dt><dd>{{ o.totals.due | money }}</dd></div>
+          }
+          @if (o.splitWays) {
+            <div><dt>{{ o.splitWays }} guests · لكل فرد</dt><dd>{{ o.totals.total / o.splitWays | money }}</dd></div>
+          }
+        </dl>
+
+        @if (!closed()) {
+          <div class="keys secondary">
+            <button type="button" class="key send" (click)="send()" [disabled]="busy() || !drafts().length">
+              <mat-icon>soup_kitchen</mat-icon>
+              <span class="en">Send to kitchen</span>
+              <span class="ar">إرسال للمطبخ</span>
+              <kbd>F4</kbd>
+            </button>
+            <button type="button" class="key" (click)="printBill()" [disabled]="busy() || !liveLines().length">
+              <mat-icon>receipt</mat-icon>
+              <span class="en">Print check</span>
+              <span class="ar">طباعة الشيك</span>
+              <kbd>F8</kbd>
+            </button>
+            <button type="button" class="key" [matMenuTriggerFor]="moveMenu" [disabled]="busy() || !(canSettle() || o.type === 'DineIn')">
+              <mat-icon>call_split</mat-icon>
+              <span class="en">Split / Transfer</span>
+              <span class="ar">فصل / نقل</span>
+            </button>
+            <button type="button" class="key" [matMenuTriggerFor]="fixMenu" [disabled]="busy()">
+              <mat-icon>sell</mat-icon>
+              <span class="en">Discount / Void</span>
+              <span class="ar">خصم / إلغاء</span>
+            </button>
+          </div>
+          <mat-menu #moveMenu="matMenu">
             @if (canSettle()) {
               <button mat-menu-item (click)="split()" [disabled]="!liveLines().length"><mat-icon>call_split</mat-icon> Split check · فصل الشيك</button>
-              <button mat-menu-item (click)="discount()"><mat-icon>sell</mat-icon> Discount · خصم</button>
             }
             @if (o.type === 'DineIn') {
               <button mat-menu-item (click)="transfer()"><mat-icon>move_up</mat-icon> Transfer table · نقل ترابيزة</button>
               <button mat-menu-item (click)="merge()"><mat-icon>merge</mat-icon> Merge tables · دمج ترابيزات</button>
             }
-            <button mat-menu-item (click)="reprint()"><mat-icon>print</mat-icon> Reprint · إعادة طباعة</button>
-            <button mat-menu-item (click)="cancel()" [disabled]="!canCancel()">
-              <mat-icon>delete_forever</mat-icon> Cancel check · إلغاء الشيك</button>
           </mat-menu>
-        </div>
-      } @else {
-        <div class="closed-bar">
-          <span class="tag" [class.ok]="o.status === 'Paid'">{{ o.status }}{{ o.paidAtUtc ? ' · ' + (o.paidAtUtc | date: 'HH:mm') : '' }}</span>
-          @if (o.pointsEarned) {
-            <span class="tag info">+{{ o.pointsEarned }} points · نقطة</span>
-          }
-          @if (waitingCount()) {
-            <span class="tag warn">Waiting to sync · بانتظار المزامنة</span>
-          }
-          <button mat-stroked-button (click)="reprint()"><mat-icon>print</mat-icon> Reprint receipt · إعادة طباعة</button>
-          <button mat-flat-button (click)="next()"><mat-icon>add</mat-icon> Next · التالي</button>
-        </div>
-      }
+          <mat-menu #fixMenu="matMenu">
+            @if (canSettle()) {
+              <button mat-menu-item (click)="discount()"><mat-icon>sell</mat-icon> Discount on the check · خصم</button>
+            }
+            <button mat-menu-item (click)="voidSelected()" [disabled]="!selected()">
+              <mat-icon>block</mat-icon> {{ selected() ? 'Void ' + selected()!.name : 'Void an item (pick its line first)' }} · إلغاء صنف</button>
+            <button mat-menu-item (click)="cancel()" [disabled]="!canCancel()"><mat-icon>delete_forever</mat-icon> Cancel check · إلغاء الشيك</button>
+          </mat-menu>
+
+          <div class="keys primary" [class.single]="!canSettle()">
+            @if (canSettle()) {
+              <button type="button" class="key pay cash" (click)="pay('Cash')" [disabled]="busy() || !liveLines().length">
+                <mat-icon>payments</mat-icon>
+                <span class="label"><span class="en">Pay cash</span><span class="ar">دفع كاش</span></span>
+              </button>
+              <button type="button" class="key pay card" (click)="pay('Card')" [disabled]="busy() || !liveLines().length">
+                <mat-icon>credit_card</mat-icon>
+                <span class="label"><span class="en">Pay card</span><span class="ar">دفع فيزا</span></span>
+              </button>
+            }
+            <button type="button" class="key more" [matMenuTriggerFor]="more" aria-label="More">
+              <mat-icon>more_horiz</mat-icon>
+              <span class="label"><span class="en">More</span><span class="ar">المزيد</span></span>
+            </button>
+          </div>
+          <mat-menu #more="matMenu">
+            @if (canSettle()) {
+              <button mat-menu-item (click)="pay()" [disabled]="!liveLines().length"><mat-icon>point_of_sale</mat-icon> Other payment, split tender · دفع آخر (F9)</button>
+            }
+            <button mat-menu-item (click)="reprint()"><mat-icon>print</mat-icon> Reprint · إعادة طباعة</button>
+            <button mat-menu-item (click)="next()"><mat-icon>add</mat-icon> Next check · الشيك التالي</button>
+          </mat-menu>
+        } @else {
+          <div class="closed-bar">
+            <span class="tag" [class.ok]="o.status === 'Paid'">{{ o.status }}{{ o.paidAtUtc ? ' · ' + (o.paidAtUtc | date: 'HH:mm') : '' }}</span>
+            @if (o.pointsEarned) {
+              <span class="tag info">+{{ o.pointsEarned }} points · نقطة</span>
+            }
+            @if (waitingCount()) {
+              <span class="tag warn">Waiting to sync · بانتظار المزامنة</span>
+            }
+            <span class="spacer"></span>
+            <button mat-stroked-button (click)="reprint()"><mat-icon>print</mat-icon> Reprint · إعادة طباعة</button>
+            <button mat-flat-button (click)="next()"><mat-icon>add</mat-icon> Next · التالي</button>
+          </div>
+        }
+      </footer>
     } @else {
       <div class="no-check">
         <mat-icon>receipt_long</mat-icon>
-        <p>Choose a check, open a table, or tap an item for a takeaway. · اختر شيكاً أو افتح ترابيزة.</p>
+        <p>Choose a check, open a table, or tap an item for a takeaway.<br /><span class="ar">اختر شيكاً أو افتح ترابيزة أو اضغط صنفاً لتيك أواي.</span></p>
         <button mat-stroked-button (click)="newCheckFromFloor()"><mat-icon>table_restaurant</mat-icon> Floor plan · خريطة الصالة</button>
-        <p class="keys muted"><kbd>F2</kbd> takeaway · <kbd>F4</kbd> send · <kbd>F8</kbd> check · <kbd>F9</kbd> pay · <kbd>/</kbd> search</p>
+        <p class="shortcuts muted"><kbd>F2</kbd> takeaway · <kbd>F4</kbd> send · <kbd>F8</kbd> check · <kbd>F9</kbd> pay · <kbd>/</kbd> search</p>
       </div>
     }
   </section>

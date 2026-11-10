@@ -43,6 +43,8 @@ export const routes: Routes = [
             canActivate: [permissionGuard(Permissions.OrdersTake)],
             loadComponent: () => import('./features/pos/floor/floor-page').then((m) => m.FloorPage),
           },
+          // The checks' page, by the name it is called in the till too.
+          { path: 'checks', redirectTo: 'orders' },
           {
             path: 'orders',
             title: 'Checks',

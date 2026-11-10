@@ -93,6 +93,48 @@ describe('the sidebar in groups', () => {
     expect(el.querySelector('.group')!.classList).toContain('first');
     expect(text(el.querySelector('.side-link .sub')!)).toBe('الخامات');
   });
+
+  it('folds to its icons only when the user asks, and stays so on every page, kept in this browser', async () => {
+    localStorage.removeItem('pos.sidebarCollapsed');
+    const sections: SideSection[] = [
+      { path: 'terminal', en: 'Terminal', ar: 'نقطة البيع', icon: 'point_of_sale' },
+      { path: 'floor', en: 'Floor plan', ar: 'الصالة', icon: 'table_restaurant' },
+    ];
+    TestBed.configureTestingModule({ providers: [provideRouter([])] });
+    const page = async () => {
+      const fixture = TestBed.createComponent(SideLayout);
+      fixture.componentRef.setInput('titleEn', 'Point of sale');
+      fixture.componentRef.setInput('titleAr', 'نقطة البيع');
+      fixture.componentRef.setInput('sections', sections);
+      await fixture.whenStable();
+      fixture.detectChanges();
+      return { fixture, el: fixture.nativeElement as HTMLElement };
+    };
+
+    const first = await page();
+    const layout = () => first.el.querySelector('.side-layout')!;
+    expect(layout().classList).not.toContain('rail');
+    const fold = first.el.querySelector<HTMLButtonElement>('button.fold')!;
+    expect(fold.getAttribute('aria-label')).toBe('Collapse the sidebar');
+
+    fold.click();
+    await first.fixture.whenStable();
+    first.fixture.detectChanges();
+    expect(layout().classList).toContain('rail');
+    expect(fold.getAttribute('aria-label')).toBe('Expand the sidebar');
+    // Folded, each section still names itself.
+    expect([...first.el.querySelectorAll('a.side-link')].map((a) => a.getAttribute('aria-label'))).toEqual(['Terminal', 'Floor plan']);
+    expect(localStorage.getItem('pos.sidebarCollapsed')).toBe('1');
+
+    // Another page: as the user left it.
+    const second = await page();
+    expect(second.el.querySelector('.side-layout')!.classList).toContain('rail');
+    second.el.querySelector<HTMLButtonElement>('button.fold')!.click();
+    await second.fixture.whenStable();
+    second.fixture.detectChanges();
+    expect(second.el.querySelector('.side-layout')!.classList).not.toContain('rail');
+    expect(localStorage.getItem('pos.sidebarCollapsed')).toBe('0');
+  });
 });
 
 describe('picking an item by typing', () => {

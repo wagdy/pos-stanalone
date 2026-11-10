@@ -8,13 +8,14 @@ import { AuthService } from '../../../core/auth/auth.service';
 import { Permissions } from '../../../core/auth/permissions';
 import { errorMessage } from '../../../core/http/error-message';
 import { LiveService } from '../../../core/pos/live.service';
-import { KitchenBoard, PosApi, Station, Ticket, TicketLine, orderTypeLabels } from '../../../core/pos/pos.api';
+import { KitchenBoard, PosApi, Station, Ticket, TicketLine, orderTypeLabels, tableTag } from '../../../core/pos/pos.api';
 import { Company } from '../../../core/settings/company';
 import { NotifyService } from '../../../core/ui/notify.service';
-import { ThemeService } from '../../../core/ui/theme';
 import { StaffGate } from '../staff-gate';
 
 const StationKey = 'pos.kdsStation';
+// The board light (for a bright kitchen) instead of dark: this screen's choice.
+const LightKey = 'pos.kdsLight';
 
 const kindBanner: Record<string, { en: string; ar: string } | null> = {
   New: null,
@@ -23,17 +24,18 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
   Transfer: { en: 'TABLE MOVED', ar: 'نقل ترابيزة' },
 };
 
-// The kitchen screen (KDS, /pos/kds): every ticket not yet made, oldest first, at all stations or
-// this screen's one. Each shows its table, waiter and how long it has waited (green, then amber past
-// 10 minutes, red past 20), its items by station with their modifiers and notes loud, and an add-on,
-// void or move as a banner. Bump marks a station's part made; done ones can be recalled. It hears a
-// new ticket the moment it is sent, with a chime.
+// The kitchen screen (KDS, /pos/kds): a dark slate board (or a light one, for a bright kitchen) of
+// every ticket not yet made, oldest first, in columns, at all stations or this screen's one. Each
+// shows its table, waiter and a timer that goes from green to amber past 10 minutes and red past 20,
+// its items under each station's header with their modifiers and notes loud, and an add-on, void or
+// move as a banner. Bump (the full width of the ticket) marks a station's part made; done ones can be
+// recalled. It hears a new ticket the moment it is sent, with a chime.
 @Component({
   selector: 'app-kds-page',
   imports: [MatButtonModule, MatIconModule, MatTooltipModule, StaffGate],
   template: `
     <app-staff-gate titleEn="Kitchen screen" titleAr="شاشة المطبخ" icon="soup_kitchen" [permission]="Permissions.KitchenWork">
-      <div class="kds">
+      <div class="kds" [class.light]="light()">
         <header class="bar">
           <strong class="title"><mat-icon>soup_kitchen</mat-icon> Kitchen <span class="ar">المطبخ</span></strong>
           <div class="stations" role="tablist" aria-label="Station">
@@ -53,7 +55,7 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
           <button mat-icon-button (click)="sound.set(!sound())" [attr.aria-label]="sound() ? 'Mute the chime' : 'Chime on new tickets'">
             <mat-icon>{{ sound() ? 'notifications_active' : 'notifications_off' }}</mat-icon>
           </button>
-          <button mat-icon-button (click)="theme.toggle()" aria-label="Light or dark"><mat-icon>contrast</mat-icon></button>
+          <button mat-icon-button (click)="toggleBoard()" [attr.aria-label]="light() ? 'Dark board' : 'Light board'" [matTooltip]="light() ? 'Dark board · داكن' : 'Light board · فاتح'"><mat-icon>contrast</mat-icon></button>
           <button mat-icon-button (click)="lock()" [matTooltip]="'Lock · ' + (auth.me()?.fullName ?? '')" aria-label="Lock the screen"><mat-icon>lock</mat-icon></button>
         </header>
 
@@ -68,13 +70,13 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
                 <div class="num">#{{ t.number }}</div>
                 <div class="where">
                   @if (t.tableLabel) {
-                    <strong>T{{ t.tableLabel }}{{ t.checkLabel ? '·' + t.checkLabel : '' }}</strong>
+                    <strong>{{ tableTag(t.tableLabel) }}{{ t.checkLabel ? '·' + t.checkLabel : '' }}</strong>
                   } @else {
                     <strong>{{ typeLabels[t.orderType].en }} · {{ typeLabels[t.orderType].ar }}</strong>
                   }
                   <small>Check {{ t.orderNumber }} · {{ t.createdBy }}{{ t.guests ? ' · ' + t.guests + ' guests' : '' }}</small>
                 </div>
-                <div class="age">{{ age(t) }}</div>
+                <div class="age"><mat-icon>timer</mat-icon>{{ age(t) }}</div>
               </header>
               @if (banner(t); as b) {
                 <div class="banner">{{ b.en }} <span class="ar">{{ b.ar }}</span></div>
@@ -83,8 +85,8 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
                 <p class="tnote">{{ t.note }}</p>
               }
               @for (g of groups(t); track g.station) {
-                @if (!station() && groups(t).length > 1) {
-                  <p class="station">{{ g.station }}</p>
+                @if (!station()) {
+                  <p class="station-head"><mat-icon>{{ stationIcon(g.station) }}</mat-icon><span class="station">{{ g.station }}</span><span class="items">{{ count(g.lines) }}</span></p>
                 }
                 <ul>
                   @for (l of g.lines; track l.id) {
@@ -119,7 +121,7 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
             <span class="label">Done · جاهز</span>
             @for (t of board().recentlyDone; track t.id) {
               <button type="button" class="recall" (click)="recall(t)" [matTooltip]="'Recall #' + t.number">
-                #{{ t.number }} {{ t.tableLabel ? 'T' + t.tableLabel : typeLabels[t.orderType].en }} <mat-icon inline>undo</mat-icon>
+                #{{ t.number }} {{ t.tableLabel ? tableTag(t.tableLabel) : typeLabels[t.orderType].en }} <mat-icon inline>undo</mat-icon>
               </button>
             }
           </section>
@@ -133,10 +135,46 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
       min-height: 100dvh;
       background: var(--mat-sys-surface-container-low);
     }
+
+    // The board: dark slate by default, light for a bright kitchen. The tickets are paper-white on
+    // either, for the words to read from across the pass.
     .kds {
+      --board: #0f172a;
+      --bar: #0b1220;
+      --bar-line: #1e293b;
+      --ink: #e2e8f0;
+      --ink-soft: #94a3b8;
+      --pill: #1e293b;
+      --pill-line: #334155;
+      --pill-on: #f8fafc;
+      --pill-on-ink: #0f172a;
+      --ticket: #f8fafc;
+      --ticket-ink: #0f172a;
+      --ticket-line: #e2e8f0;
+      --head: #1e293b;
+      --fresh: #22c55e;
+      --warm: #f59e0b;
+      --late: #ef4444;
+
       display: flex;
       flex-direction: column;
       min-height: 100dvh;
+      background: var(--board);
+      color: var(--ink);
+
+      &.light {
+        --board: #f1f5f9;
+        --bar: #ffffff;
+        --bar-line: #e2e8f0;
+        --ink: #0f172a;
+        --ink-soft: #475569;
+        --pill: #ffffff;
+        --pill-line: #cbd5e1;
+        --pill-on: #0f172a;
+        --pill-on-ink: #ffffff;
+        --ticket: #ffffff;
+        --head: #0f172a;
+      }
     }
     .bar {
       position: sticky;
@@ -146,15 +184,21 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
       flex-wrap: wrap;
       align-items: center;
       gap: 8px 12px;
-      padding: 8px 14px;
-      background: var(--mat-sys-surface-container-lowest);
-      border-bottom: 1px solid var(--app-line);
+      padding: 10px 16px;
+      background: var(--bar);
+      border-bottom: 1px solid var(--bar-line);
+      color: var(--ink);
+
+      button[mat-icon-button] {
+        color: var(--ink);
+      }
     }
     .title {
       display: inline-flex;
       align-items: center;
-      gap: 6px;
+      gap: 8px;
       font: var(--mat-sys-title-large);
+      font-weight: 700;
     }
     .ar {
       direction: rtl;
@@ -168,64 +212,92 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
       gap: 6px;
     }
     .st {
-      height: 38px;
-      padding: 0 14px;
-      border: 1px solid var(--app-line-strong);
+      height: 40px;
+      padding: 0 16px;
+      border: 1px solid var(--pill-line);
       border-radius: 999px;
-      background: transparent;
-      color: inherit;
+      background: var(--pill);
+      color: var(--ink);
       font: var(--mat-sys-label-large);
+      font-weight: 650;
       cursor: pointer;
 
       &.on {
-        background: var(--mat-sys-primary);
-        border-color: var(--mat-sys-primary);
-        color: var(--mat-sys-on-primary);
+        border-color: var(--pill-on);
+        background: var(--pill-on);
+        color: var(--pill-on-ink);
+      }
+      &:focus-visible {
+        outline: 2px solid #818cf8;
+        outline-offset: 2px;
       }
     }
-    .count strong {
-      font-size: 20px;
+    .spacer {
+      flex: 1;
+    }
+    .count {
+      color: var(--ink-soft);
+
+      strong {
+        color: var(--ink);
+        font-size: 22px;
+      }
     }
     .live {
-      color: var(--mat-sys-error);
+      display: inline-flex;
+      color: var(--late);
+
       &.on {
-        color: var(--app-ok);
+        color: var(--fresh);
       }
     }
     .clock {
-      font: 700 20px/1 ui-monospace, monospace;
+      font: 700 22px/1 ui-monospace, monospace;
       font-variant-numeric: tabular-nums;
     }
     .empty {
       display: flex;
       align-items: center;
       justify-content: center;
-      gap: 8px;
-      margin: 15vh 0 0;
+      gap: 10px;
+      margin: 18vh 0 0;
       font: var(--mat-sys-headline-small);
-      color: var(--mat-sys-on-surface-variant);
+      color: var(--ink-soft);
+
+      mat-icon {
+        width: 32px;
+        height: 32px;
+        font-size: 32px;
+        color: var(--fresh);
+      }
     }
+
+    // The tickets in columns, oldest first.
     .tickets {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
       align-items: start;
-      gap: 12px;
-      padding: 12px;
+      gap: 14px;
+      padding: 16px;
     }
     .ticket {
+      --age: var(--fresh);
       display: flex;
       flex-direction: column;
-      border-radius: 14px;
-      background: var(--mat-sys-surface-container-lowest);
-      border: 3px solid var(--age, #16a34a);
-      box-shadow: var(--app-card-shadow);
       overflow: hidden;
+      border-radius: 14px;
+      background: var(--ticket);
+      color: var(--ticket-ink);
+      border-top: 6px solid var(--age);
+      box-shadow:
+        0 1px 2px rgb(0 0 0 / 30%),
+        0 14px 28px -18px rgb(0 0 0 / 60%);
 
       &.warm {
-        --age: #f59e0b;
+        --age: var(--warm);
       }
       &.late {
-        --age: #dc2626;
+        --age: var(--late);
       }
       &.fresh {
         animation: kds-flash 1.2s ease 2;
@@ -234,9 +306,9 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
         display: flex;
         align-items: center;
         gap: 10px;
-        padding: 8px 10px;
-        background: var(--age, #16a34a);
-        color: #fff;
+        padding: 10px 12px;
+        background: var(--head);
+        color: #f8fafc;
       }
       .num {
         font: 800 24px/1 system-ui;
@@ -248,19 +320,39 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
 
         strong {
           font-size: 18px;
+          line-height: 1.2;
         }
         small {
-          opacity: 0.9;
-          overflow: hidden;
-          white-space: nowrap;
-          text-overflow: ellipsis;
+          opacity: 0.8;
+          line-height: 1.3;
+          overflow-wrap: anywhere;
         }
       }
+      // The timer: its colour says how long the ticket has waited.
       .age {
-        font: 700 18px/1 ui-monospace, monospace;
+        display: inline-flex;
+        flex: none;
+        align-items: center;
+        gap: 4px;
+        padding: 5px 10px;
+        border-radius: 999px;
+        background: var(--age);
+        color: #0f172a;
+        font: 800 17px/1 ui-monospace, monospace;
+        font-variant-numeric: tabular-nums;
+
+        mat-icon {
+          width: 17px;
+          height: 17px;
+          font-size: 17px;
+        }
+      }
+      &.late .age {
+        color: #fff;
+        animation: kds-pulse 1.6s ease-in-out infinite;
       }
       .banner {
-        padding: 6px 10px;
+        padding: 8px 10px;
         font: 800 18px/1.2 system-ui;
         letter-spacing: 0.04em;
         text-align: center;
@@ -280,62 +372,137 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
         text-decoration-color: #dc2626;
       }
       .tnote {
-        margin: 6px 10px 0;
-        font-weight: 600;
+        margin: 8px 12px 0;
+        padding: 6px 8px;
+        border-radius: 8px;
+        background: #fef3c7;
+        color: #92400e;
+        font-weight: 700;
       }
-      .station {
-        margin: 8px 10px 0;
-        padding-bottom: 2px;
-        border-bottom: 1px dashed var(--app-line-strong);
+      // A station's header: crisp, its icon and how many items it makes.
+      .station-head {
+        display: flex;
+        align-items: center;
+        gap: 6px;
+        margin: 10px 12px 0;
+        padding: 5px 8px;
+        border-radius: 8px;
+        background: #e2e8f0;
+        color: #0f172a;
         font: var(--mat-sys-label-large);
+        font-weight: 800;
+        letter-spacing: 0.06em;
         text-transform: uppercase;
-        color: var(--mat-sys-on-surface-variant);
+
+        mat-icon {
+          width: 18px;
+          height: 18px;
+          font-size: 18px;
+        }
+        .items {
+          margin-inline-start: auto;
+          padding: 0 7px;
+          border-radius: 999px;
+          background: #0f172a;
+          color: #fff;
+          font-size: 11.5px;
+          line-height: 18px;
+          letter-spacing: 0;
+        }
       }
       ul {
         margin: 0;
-        padding: 4px 10px 8px;
+        padding: 4px 12px 10px;
         list-style: none;
       }
       li {
         display: flex;
-        gap: 10px;
-        padding: 6px 0;
-        border-bottom: 1px solid var(--app-line);
+        gap: 12px;
+        padding: 8px 0;
+        border-bottom: 1px solid var(--ticket-line);
 
+        &:last-child {
+          border-bottom: 0;
+        }
         &.done {
-          opacity: 0.45;
+          opacity: 0.4;
           text-decoration: line-through;
         }
       }
       .q {
-        min-width: 28px;
-        font: 800 22px/1.1 system-ui;
+        display: inline-grid;
+        flex: none;
+        place-items: center;
+        min-width: 34px;
+        height: 34px;
+        border-radius: 9px;
+        background: #0f172a;
+        color: #fff;
+        font: 800 19px/1 system-ui;
       }
       .n {
         display: grid;
+        gap: 2px;
+        min-width: 0;
         font-size: 17px;
 
+        strong {
+          line-height: 1.25;
+        }
         .ar {
           margin: 0;
           font-size: 15px;
+          text-align: left;
         }
       }
       .mod {
         font-weight: 700;
-        color: var(--mat-sys-primary);
+        color: #4338ca;
       }
       .note {
+        justify-self: start;
         margin-top: 2px;
-        padding: 2px 6px;
+        padding: 2px 8px;
         border-radius: 6px;
         background: #fef3c7;
         color: #92400e;
         font-weight: 800;
       }
+      // Bump: the width of the ticket, tactile.
       .bump {
-        margin: auto 10px 10px;
-        height: 48px;
-        font-size: 16px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 8px;
+        margin: auto 0 0;
+        width: 100%;
+        height: 60px;
+        border-radius: 0;
+        --mat-button-filled-container-color: #16a34a;
+        --mat-button-filled-label-text-color: #fff;
+        --mat-button-filled-container-shape: 0;
+        font-size: 18px;
+        font-weight: 800;
+        letter-spacing: 0.02em;
+        box-shadow: inset 0 3px 0 rgb(255 255 255 / 18%);
+        transition: transform 80ms ease, filter 120ms ease;
+
+        mat-icon {
+          width: 24px;
+          height: 24px;
+          font-size: 24px;
+        }
+        &:hover:not(:disabled) {
+          filter: brightness(1.08);
+        }
+        &:active:not(:disabled) {
+          transform: translateY(1px);
+          box-shadow: inset 0 3px 8px rgb(0 0 0 / 30%);
+        }
+      }
+      &.k-Void .bump,
+      &.k-Transfer .bump {
+        --mat-button-filled-container-color: #334155;
       }
     }
     .done-strip {
@@ -346,33 +513,40 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
       align-items: center;
       gap: 6px;
       margin-top: auto;
-      padding: 8px 14px;
-      background: var(--mat-sys-surface-container-lowest);
-      border-top: 1px solid var(--app-line);
+      padding: 10px 16px;
+      background: var(--bar);
+      border-top: 1px solid var(--bar-line);
 
       .label {
         font: var(--mat-sys-label-large);
-        color: var(--mat-sys-on-surface-variant);
+        color: var(--ink-soft);
       }
     }
     .recall {
       display: inline-flex;
       align-items: center;
       gap: 4px;
-      padding: 6px 10px;
-      border: 1px solid var(--app-line-strong);
+      height: 36px;
+      padding: 0 12px;
+      border: 1px solid var(--pill-line);
       border-radius: 999px;
-      background: transparent;
-      color: inherit;
+      background: var(--pill);
+      color: var(--ink);
       cursor: pointer;
     }
     @keyframes kds-flash {
       50% {
-        box-shadow: 0 0 0 6px color-mix(in srgb, var(--mat-sys-primary) 50%, transparent);
+        box-shadow: 0 0 0 6px rgb(99 102 241 / 70%);
+      }
+    }
+    @keyframes kds-pulse {
+      50% {
+        filter: brightness(1.25);
       }
     }
     @media (prefers-reduced-motion: reduce) {
-      .ticket.fresh {
+      .ticket.fresh,
+      .ticket.late .age {
         animation: none;
       }
     }
@@ -381,18 +555,19 @@ const kindBanner: Record<string, { en: string; ar: string } | null> = {
 export class KdsPage implements OnDestroy {
   protected readonly auth = inject(AuthService);
   protected readonly live = inject(LiveService);
-  protected readonly theme = inject(ThemeService);
   private readonly api = inject(PosApi);
   private readonly notify = inject(NotifyService);
   private readonly company = inject(Company);
   protected readonly Permissions = Permissions;
   protected readonly typeLabels = orderTypeLabels;
+  protected readonly tableTag = tableTag;
 
   protected readonly board = signal<KitchenBoard>({ active: [], recentlyDone: [] });
   protected readonly stations = signal<Station[]>([]);
   protected readonly station = signal<string | null>(readStation());
   protected readonly busy = signal<string | null>(null);
   protected readonly sound = signal(true);
+  protected readonly light = signal(readLight());
   protected readonly fresh = signal(new Set<string>());
   private readonly now = signal(Date.now());
   protected readonly clock = computed(() => this.company.formatLocal(new Date(this.now()).toISOString(), false));
@@ -428,6 +603,31 @@ export class KdsPage implements OnDestroy {
     } catch {
       // This tab only.
     }
+  }
+
+  protected toggleBoard(): void {
+    const light = !this.light();
+    this.light.set(light);
+    try {
+      localStorage.setItem(LightKey, light ? '1' : '0');
+    } catch {
+      // This tab only.
+    }
+  }
+
+  // A station's header: its icon by its name (the grill, the bar, the oven…), a pot otherwise.
+  protected stationIcon(name: string): string {
+    const n = name.toLowerCase();
+    if (/bar|drink|juice|coffee|مشروب|بار/.test(n)) return 'local_bar';
+    if (/grill|مشوي|شوي/.test(n)) return 'outdoor_grill';
+    if (/pizza|oven|bake|فرن|بيتزا/.test(n)) return 'local_pizza';
+    if (/dessert|sweet|حلو/.test(n)) return 'icecream';
+    if (/cold|salad|سلط/.test(n)) return 'eco';
+    return 'soup_kitchen';
+  }
+
+  protected count(lines: TicketLine[]): number {
+    return lines.reduce((n, l) => n + l.quantity, 0);
   }
 
   protected banner(t: Ticket) {
@@ -511,6 +711,14 @@ export class KdsPage implements OnDestroy {
     } catch {
       // Kept as it was; the next change or look tries again.
     }
+  }
+}
+
+function readLight(): boolean {
+  try {
+    return localStorage.getItem(LightKey) === '1';
+  } catch {
+    return false;
   }
 }
 

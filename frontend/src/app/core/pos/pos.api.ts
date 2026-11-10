@@ -28,6 +28,12 @@ export const orderTypeLabels: Record<OrderType, { en: string; ar: string; icon: 
   Delivery: { en: 'Delivery', ar: 'توصيل', icon: 'delivery_dining' },
 };
 
+// A table as the till names it: a number gets a T (T2); a label that is already a name (T1, Bar 3)
+// stays as it is.
+export function tableTag(label: string): string {
+  return /^\d/.test(label) ? `T${label}` : label;
+}
+
 export const lineStatusLabels: Record<LineStatus, { en: string; ar: string }> = {
   Draft: { en: 'Not sent', ar: 'لم يُرسل' },
   Sent: { en: 'Sent to kitchen', ar: 'أُرسل للمطبخ' },

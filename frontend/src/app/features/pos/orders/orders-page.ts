@@ -31,8 +31,9 @@ import { PrintPreviewData, PrintPreviewDialog } from '../print-preview';
 type Filter = 'all' | 'open' | 'paid' | 'cancelled';
 
 // The day's checks (الشيكات): each with its items, voids (before and after the kitchen), payments
-// and kitchen tickets; the check, the receipt or any of its tickets seen as the 80 mm printer would
-// print them, and printed again.
+// and kitchen tickets. The check picked is shown beside the list as a slip of thermal paper; the
+// check, the receipt or any of its tickets can be seen exactly as the 80 mm printer prints them, and
+// printed again.
 @Component({
   selector: 'app-orders-page',
   imports: [DatePipe, FormsModule, MatButtonModule, MatIconModule, MatProgressBarModule, MoneyPipe],
@@ -41,7 +42,10 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
       <h1>Checks &amp; receipts <span class="inline-ar">الشيكات والإيصالات</span></h1>
       <span class="spacer"></span>
       <input type="date" [ngModel]="date()" (ngModelChange)="setDate($event)" aria-label="Day" />
-      <input type="search" placeholder="Check no., table, customer" [ngModel]="search()" (ngModelChange)="search.set($event)" aria-label="Find a check" />
+      <label class="find">
+        <mat-icon>search</mat-icon>
+        <input type="search" placeholder="Check no., table, customer · بحث" [ngModel]="search()" (ngModelChange)="search.set($event)" aria-label="Find a check" />
+      </label>
     </div>
     <div class="filters" role="tablist">
       @for (f of filters; track f.key) {
@@ -79,17 +83,10 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
 
       <aside class="detail">
         @if (selected(); as o) {
-          <header>
+          <div class="detail-head">
             <h2>Check #{{ o.number }}{{ o.checkLabel ? ' · ' + o.checkLabel : '' }}</h2>
             <span class="tag" [class]="tone(o.status)">{{ o.status }}</span>
-          </header>
-          <p class="muted">
-            {{ typeLabels[o.type].en }}{{ o.tableLabel ? ' · table ' + o.tableLabel : '' }} · {{ o.guests }} guests · {{ o.openedBy }}
-            {{ o.settledBy ? ' · settled by ' + o.settledBy : '' }}
-            @if (o.customer?.name) {
-              <br />{{ o.customer!.name }} {{ o.customer!.phone }}{{ o.pointsEarned ? ' · +' + o.pointsEarned + ' points' : '' }}
-            }
-          </p>
+          </div>
           <div class="acts">
             <button mat-stroked-button (click)="previewCheck(o, false)"><mat-icon>receipt</mat-icon> Check preview</button>
             @if (o.status === 'Paid') {
@@ -101,48 +98,74 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
             }
           </div>
 
-          <h3>Items · الأصناف</h3>
-          <ul class="lines">
-            @for (l of o.lines; track l.id) {
-              <li [class.gone]="l.quantity === 0">
-                <span>{{ l.quantity }}× {{ l.name }}{{ l.sizeName ? ' (' + l.sizeName + ')' : '' }}{{ l.modifiers ? ' + ' + l.modifiers : '' }}</span>
-                <small>{{ statusLabels[l.status].en }}</small>
-                <span class="num">{{ l.total | money }}</span>
-              </li>
-            }
-          </ul>
-          @if (o.voids.length) {
-            <h3>Voids · الإلغاءات</h3>
-            <ul class="lines">
-              @for (v of o.voids; track v.id) {
-                <li>
-                  <span><span class="tag" [class.bad]="v.kind === 'AfterKitchen'" [class.warn]="v.kind === 'BeforeKitchen'">{{ v.kind === 'AfterKitchen' ? 'After' : 'Before' }}</span>
-                    {{ v.quantity }}× {{ v.itemName }}</span>
-                  <small>{{ v.reason ?? '' }}{{ v.outcome === 'Waste' ? ' · waste' : v.outcome === 'ReturnToStock' ? ' · back to stock' : '' }}{{ v.authorizedBy ? ' · ' + v.authorizedBy : '' }}</small>
-                  <span class="num">{{ v.amount | money }}</span>
-                </li>
+          <!-- The check as a slip of thermal paper -->
+          <div class="paper">
+            <article class="receipt" [attr.aria-label]="'Check ' + o.number + ' as printed'">
+              <header class="r-head">
+                <strong class="r-company">{{ company.name() }}</strong>
+                <span class="r-kind">{{ o.status === 'Paid' ? 'RECEIPT · إيصال' : 'CHECK · شيك' }}</span>
+                <span class="r-row"><span>Check #{{ o.number }}{{ o.checkLabel ? ' · ' + o.checkLabel : '' }}</span><span>{{ o.openedAtUtc | date: 'dd/MM HH:mm' }}</span></span>
+                <span class="r-row"><span>{{ typeLabels[o.type].en }}{{ o.tableLabel ? ' · Table ' + o.tableLabel : '' }}</span><span>{{ o.guests }} guests</span></span>
+                <span class="r-row"><span>By {{ o.openedBy }}</span>@if (o.settledBy) {<span>Settled {{ o.settledBy }}</span>}</span>
+                @if (o.customer?.name) {
+                  <span class="r-row"><span>{{ o.customer!.name }} {{ o.customer!.phone }}</span>@if (o.pointsEarned) {<span>+{{ o.pointsEarned }} pts</span>}</span>
+                }
+              </header>
+
+              <ul class="r-lines">
+                @for (l of o.lines; track l.id) {
+                  <li [class.gone]="l.quantity === 0">
+                    <span class="r-item">{{ l.quantity }}× <bdi>{{ l.name }}</bdi>{{ l.sizeName ? ' (' + l.sizeName + ')' : '' }}</span>
+                    <span class="r-amt">{{ l.total | money }}</span>
+                    @if (l.modifiers) {
+                      <small>+ {{ l.modifiers }}</small>
+                    }
+                    <small class="r-state">{{ statusLabels[l.status].en }}</small>
+                  </li>
+                }
+              </ul>
+
+              @if (o.voids.length) {
+                <p class="r-section">VOIDS · الإلغاءات</p>
+                <ul class="r-lines">
+                  @for (v of o.voids; track v.id) {
+                    <li>
+                      <span class="r-item">{{ v.quantity }}× <bdi>{{ v.itemName }}</bdi> <b>{{ v.kind === 'AfterKitchen' ? 'AFTER' : 'BEFORE' }}</b></span>
+                      <span class="r-amt">{{ v.amount | money }}</span>
+                      <small>{{ v.reason ?? '' }}{{ v.outcome === 'Waste' ? ' · waste' : v.outcome === 'ReturnToStock' ? ' · back to stock' : '' }}{{ v.authorizedBy ? ' · ' + v.authorizedBy : '' }}</small>
+                    </li>
+                  }
+                </ul>
               }
-            </ul>
-          }
-          <dl class="totals">
-            <div><dt>Subtotal</dt><dd>{{ o.totals.gross | money }}</dd></div>
-            @if (o.totals.lineDiscounts + o.totals.billDiscount + o.totals.redemption > 0) {
-              <div><dt>Discounts</dt><dd>−{{ o.totals.lineDiscounts + o.totals.billDiscount + o.totals.redemption | money }}</dd></div>
-            }
-            @if (o.totals.service) {
-              <div><dt>Service</dt><dd>{{ o.totals.service | money }}</dd></div>
-            }
-            <div><dt>VAT</dt><dd>{{ o.totals.tax | money }}</dd></div>
-            <div class="grand"><dt>Total</dt><dd>{{ o.totals.total | money }}</dd></div>
-          </dl>
-          @if (o.payments.length) {
-            <h3>Payments · المدفوعات</h3>
-            <ul class="lines">
-              @for (p of o.payments; track p.id) {
-                <li><span>{{ payLabels[p.method].en }}</span><small>{{ p.atUtc | date: 'HH:mm' }} · {{ p.by }}{{ p.change ? ' · change ' + (p.change | money) : '' }}</small><span class="num">{{ p.amount | money }}</span></li>
+
+              <dl class="r-totals">
+                <div><dt>Subtotal</dt><dd>{{ o.totals.gross | money }}</dd></div>
+                @if (o.totals.lineDiscounts + o.totals.billDiscount + o.totals.redemption > 0) {
+                  <div><dt>Discounts</dt><dd>−{{ o.totals.lineDiscounts + o.totals.billDiscount + o.totals.redemption | money }}</dd></div>
+                }
+                @if (o.totals.service) {
+                  <div><dt>Service</dt><dd>{{ o.totals.service | money }}</dd></div>
+                }
+                <div><dt>VAT</dt><dd>{{ o.totals.tax | money }}</dd></div>
+                <div class="grand"><dt>TOTAL</dt><dd>{{ o.totals.total | money }}</dd></div>
+              </dl>
+
+              @if (o.payments.length) {
+                <p class="r-section">PAYMENTS · المدفوعات</p>
+                <ul class="r-lines">
+                  @for (p of o.payments; track p.id) {
+                    <li>
+                      <span class="r-item">{{ payLabels[p.method].en }}</span>
+                      <span class="r-amt">{{ p.amount | money }}</span>
+                      <small>{{ p.atUtc | date: 'HH:mm' }} · {{ p.by }}{{ p.change ? ' · change ' + (p.change | money) : '' }}</small>
+                    </li>
+                  }
+                </ul>
               }
-            </ul>
-          }
+              <p class="r-foot">Thank you · شكراً لزيارتكم</p>
+            </article>
+          </div>
+
           @if (o.tickets.length) {
             <h3>Kitchen tickets · بونات المطبخ</h3>
             <div class="tickets">
@@ -152,7 +175,10 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
             </div>
           }
         } @else {
-          <p class="muted">Pick a check to see it. · اختر شيكاً</p>
+          <div class="pick">
+            <mat-icon>receipt_long</mat-icon>
+            <p>Pick a check to see it. · اختر شيكاً</p>
+          </div>
         }
       </aside>
     </div>
@@ -167,15 +193,47 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
     .muted {
       color: var(--mat-sys-on-surface-variant);
     }
-    input[type='date'],
-    input[type='search'] {
-      height: 38px;
+    input[type='date'] {
+      height: 40px;
       padding: 0 10px;
       border: 1px solid var(--app-line-strong);
       border-radius: 10px;
-      background: transparent;
+      background: var(--mat-sys-surface-container-lowest);
       color: inherit;
       font: inherit;
+    }
+    // The search: wide enough for its hint whole.
+    .find {
+      display: flex;
+      flex: 0 1 360px;
+      align-items: center;
+      gap: 6px;
+      min-width: min(320px, 100%);
+      height: 40px;
+      padding: 0 12px;
+      box-sizing: border-box;
+      border: 1px solid var(--app-line-strong);
+      border-radius: 10px;
+      background: var(--mat-sys-surface-container-lowest);
+
+      mat-icon {
+        flex: none;
+        color: var(--mat-sys-on-surface-variant);
+      }
+      input {
+        flex: 1;
+        min-width: 0;
+        height: 100%;
+        border: 0;
+        outline: 0;
+        background: transparent;
+        color: inherit;
+        font: inherit;
+      }
+      &:focus-within {
+        border-color: var(--app-indigo-500, #6366f1);
+        box-shadow: 0 0 0 3px color-mix(in srgb, var(--app-indigo-500, #6366f1) 18%, transparent);
+      }
     }
     .filters {
       display: flex;
@@ -212,24 +270,30 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
     .detail {
       position: sticky;
       top: calc(var(--app-sticky-top, 0px) + 16px);
+      max-height: calc(100dvh - var(--app-sticky-top, 0px) - 32px);
+      overflow-y: auto;
       padding: 14px;
+      box-sizing: border-box;
       border-radius: 16px;
       border: 1px solid var(--app-line);
-      background: var(--mat-sys-surface-container-lowest);
+      background: var(--mat-sys-surface-container-low);
       box-shadow: var(--app-card-shadow);
 
-      header {
-        display: flex;
-        align-items: center;
-        justify-content: space-between;
+      h3 {
+        margin: 16px 0 6px;
+        font: var(--mat-sys-title-small);
       }
+    }
+    .detail-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+      margin-bottom: 8px;
+
       h2 {
         margin: 0;
         font: var(--mat-sys-title-large);
-      }
-      h3 {
-        margin: 12px 0 4px;
-        font: var(--mat-sys-title-small);
       }
     }
     .acts,
@@ -238,34 +302,113 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
       flex-wrap: wrap;
       gap: 6px;
     }
-    .lines {
+    .pick {
+      display: grid;
+      justify-items: center;
+      gap: 6px;
+      padding: 48px 12px;
+      color: var(--mat-sys-on-surface-variant);
+      text-align: center;
+
+      mat-icon {
+        width: 48px;
+        height: 48px;
+        font-size: 48px;
+        opacity: 0.35;
+      }
+    }
+
+    // A slip of 80 mm paper: white whatever the theme, mono type, dashed rules, a torn foot.
+    .paper {
+      margin: 14px auto 18px;
+      max-width: 320px;
+      filter: drop-shadow(0 8px 14px rgb(15 23 42 / 16%)) drop-shadow(0 1px 1px rgb(15 23 42 / 10%));
+    }
+    .receipt {
+      --paper: #fffefa;
+      position: relative;
+      padding: 18px 16px 14px;
+      background: var(--paper);
+      color: #111827;
+      font: 12.5px/1.45 ui-monospace, 'SFMono-Regular', Menlo, Consolas, monospace;
+
+      &::after {
+        content: '';
+        position: absolute;
+        inset: auto 0 -7px;
+        height: 7px;
+        background: conic-gradient(from -45deg at 50% 100%, var(--paper) 90deg, transparent 0) 0 0 / 12px 100% repeat-x;
+      }
+    }
+    .r-head {
+      display: grid;
+      gap: 1px;
+      padding-bottom: 8px;
+      margin-bottom: 6px;
+      border-bottom: 1px dashed #9ca3af;
+      text-align: center;
+    }
+    .r-company {
+      font-size: 15px;
+      font-weight: 800;
+      letter-spacing: 0.02em;
+    }
+    .r-kind {
+      margin-bottom: 4px;
+      font-weight: 700;
+      letter-spacing: 0.12em;
+    }
+    .r-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      font-size: 11.5px;
+      text-align: start;
+    }
+    .r-section {
+      margin: 8px 0 2px;
+      padding-top: 6px;
+      border-top: 1px dashed #9ca3af;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+    }
+    .r-lines {
       margin: 0;
       padding: 0;
       list-style: none;
 
       li {
         display: grid;
-        grid-template-columns: 1fr auto;
+        grid-template-columns: minmax(0, 1fr) auto;
         gap: 0 8px;
-        padding: 4px 0;
-        border-bottom: 1px solid var(--app-line);
+        padding: 3px 0;
+      }
+      .r-item {
+        overflow-wrap: anywhere;
+      }
+      .r-amt {
+        font-variant-numeric: tabular-nums;
+        white-space: nowrap;
       }
       small {
-        grid-column: 1;
-        color: var(--mat-sys-on-surface-variant);
-      }
-      .num {
-        grid-row: 1;
-        grid-column: 2;
-        font-variant-numeric: tabular-nums;
+        grid-column: 1 / -1;
+        padding-inline-start: 2ch;
+        color: #4b5563;
+        font-size: 11px;
       }
       .gone {
-        opacity: 0.5;
+        color: #9ca3af;
         text-decoration: line-through;
       }
+      b {
+        font-size: 10px;
+        letter-spacing: 0.06em;
+      }
     }
-    .totals {
-      margin: 10px 0 0;
+    .r-totals {
+      margin: 6px 0 0;
+      padding-top: 6px;
+      border-top: 1px dashed #9ca3af;
 
       div {
         display: flex;
@@ -275,10 +418,23 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
       dd {
         margin: 0;
       }
+      dd {
+        font-variant-numeric: tabular-nums;
+      }
       .grand {
-        font-size: 18px;
+        margin-top: 4px;
+        padding-top: 4px;
+        border-top: 2px solid #111827;
+        font-size: 15px;
         font-weight: 800;
       }
+    }
+    .r-foot {
+      margin: 10px 0 0;
+      padding-top: 6px;
+      border-top: 1px dashed #9ca3af;
+      text-align: center;
+      font-size: 11.5px;
     }
     @media (max-width: 1099.98px) {
       .split {
@@ -286,6 +442,7 @@ type Filter = 'all' | 'open' | 'paid' | 'cancelled';
       }
       .detail {
         position: static;
+        max-height: none;
       }
     }
   `,
@@ -295,7 +452,7 @@ export class OrdersPage implements OnInit {
   private readonly dialog = inject(MatDialog);
   private readonly notify = inject(NotifyService);
   private readonly router = inject(Router);
-  private readonly company = inject(Company);
+  protected readonly company = inject(Company);
   private readonly live = inject(LiveService);
   protected readonly typeLabels = orderTypeLabels;
   protected readonly statusLabels = lineStatusLabels;

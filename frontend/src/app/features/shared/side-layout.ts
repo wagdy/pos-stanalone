@@ -4,12 +4,16 @@ import { Component, ElementRef, Injector, afterNextRender, computed, effect, inj
 import { toSignal } from '@angular/core/rxjs-interop';
 import { MatButtonModule } from '@angular/material/button';
 import { MatIconModule } from '@angular/material/icon';
+import { MatTooltipModule } from '@angular/material/tooltip';
 import { ActivatedRoute, NavigationEnd, Router, RouterLink, RouterLinkActive } from '@angular/router';
 import { filter, map } from 'rxjs';
 
 // Narrower than this, the sections are a drawer behind a menu button, above the page (as the
 // styles' own media query says).
 const Compact = '(max-width: 959.98px)';
+
+// Whether the sidebar is folded to its icons: the user's choice, kept in this browser.
+const CollapsedKey = 'pos.sidebarCollapsed';
 
 // A group of a module's sections, shown above its first: its key, and its names.
 export interface SideGroup {
@@ -32,14 +36,16 @@ export interface SideSection {
 
 // A module's sections in a sidebar at the start of the page, the page (projected) beside it: on the
 // left, or on the right for right-to-left (its sides are logical, start and end). It stays in view
-// under the shell's bar as the page scrolls. On a phone they are a drawer, opened from a bar above
+// under the shell's bar as the page scrolls. Folded or open is the user's to choose, with the « / »
+// at its top, and stays as they left it on every page (kept in this browser): folded, its icons
+// alone, each naming itself at once on hover. On a phone they are a drawer, opened from a bar above
 // the page that names the section open, with a dot when something waits in one; picking one,
 // Escape or the backdrop closes it, and Tab stays in it while open.
 @Component({
   selector: 'app-side-layout',
-  imports: [A11yModule, MatButtonModule, MatIconModule, RouterLink, RouterLinkActive],
+  imports: [A11yModule, MatButtonModule, MatIconModule, MatTooltipModule, RouterLink, RouterLinkActive],
   template: `
-    <div class="side-layout" [class.rail]="rail()">
+    <div class="side-layout" [class.rail]="collapsed()">
       <div class="mobile-bar no-print">
         <button
           #menuButton
@@ -80,6 +86,18 @@ export interface SideSection {
       >
         <header class="side-head">
           <h1 id="side-sections-title">{{ titleEn() }} <span class="sub">{{ titleAr() }}</span></h1>
+          <button
+            type="button"
+            class="fold"
+            (click)="toggleCollapsed()"
+            [attr.aria-label]="collapsed() ? 'Expand the sidebar' : 'Collapse the sidebar'"
+            [attr.aria-expanded]="!collapsed()"
+            [matTooltip]="collapsed() ? 'Expand · توسيع' : 'Collapse · طي'"
+            matTooltipPosition="right"
+            [matTooltipShowDelay]="0"
+          >
+            <mat-icon>{{ collapsed() ? 'keyboard_double_arrow_right' : 'keyboard_double_arrow_left' }}</mat-icon>
+          </button>
           <button mat-icon-button class="close" (click)="closeMenu(true)" aria-label="Close the sections"><mat-icon>close</mat-icon></button>
         </header>
         <nav [attr.aria-label]="titleEn() + ' sections'">
@@ -89,7 +107,18 @@ export interface SideSection {
                 <span>{{ section.group.en }}</span><span class="group-ar" lang="ar">{{ section.group.ar }}</span>
               </p>
             }
-            <a class="side-link" [routerLink]="section.path" routerLinkActive="active" ariaCurrentWhenActive="page" [attr.title]="rail() ? section.en + ' · ' + section.ar : null">
+            <a
+              class="side-link"
+              [routerLink]="section.path"
+              routerLinkActive="active"
+              ariaCurrentWhenActive="page"
+              [attr.aria-label]="collapsed() ? section.en : null"
+              [matTooltip]="section.en + ' · ' + section.ar"
+              [matTooltipDisabled]="!collapsed() || compact()"
+              matTooltipPosition="right"
+              [matTooltipShowDelay]="0"
+              [matTooltipHideDelay]="0"
+            >
               <mat-icon>{{ section.icon }}</mat-icon>
               <span class="label"><span class="en">{{ section.en }}</span><span class="sub" lang="ar">{{ section.ar }}</span></span>
               @if (section.count) {
@@ -108,8 +137,8 @@ export interface SideSection {
     // phone's bar stay in view under it.
     .side-layout {
       display: grid;
-      grid-template-columns: 272px minmax(0, 1fr);
-      gap: 20px;
+      grid-template-columns: 236px minmax(0, 1fr);
+      gap: 16px;
       align-items: start;
     }
     .body {
@@ -137,20 +166,60 @@ export interface SideSection {
     }
     .side-head {
       display: flex;
-      align-items: flex-start;
+      align-items: center;
       gap: 8px;
-      padding: 4px 8px 10px;
+      padding: 2px 2px 8px 8px;
       margin-bottom: 2px;
       border-bottom: 1px solid color-mix(in srgb, var(--mat-sys-outline-variant) 70%, transparent);
 
       h1 {
         display: grid;
-        gap: 2px;
+        flex: 1;
+        gap: 0;
+        min-width: 0;
         margin: 0;
-        font: var(--mat-sys-title-medium);
+        font: var(--mat-sys-title-small);
+        font-size: 15px;
         font-weight: 650;
         letter-spacing: -0.01em;
+        white-space: nowrap;
       }
+    }
+
+    // The « / » that folds the sidebar to its icons and opens it again.
+    .fold {
+      display: inline-grid;
+      flex: none;
+      place-items: center;
+      width: 32px;
+      height: 32px;
+      padding: 0;
+      border: 1px solid var(--app-line);
+      border-radius: 9px;
+      background: var(--mat-sys-surface-container-lowest);
+      color: var(--app-slate-500, #64748b);
+      cursor: pointer;
+      transition:
+        background-color 150ms ease,
+        color 150ms ease;
+
+      mat-icon {
+        width: 20px;
+        height: 20px;
+        font-size: 20px;
+      }
+      &:hover {
+        background: var(--app-slate-100, #f1f5f9);
+        color: var(--app-slate-900, #0f172a);
+      }
+      &:focus-visible {
+        outline: 2px solid var(--app-indigo-500, #6366f1);
+        outline-offset: 1px;
+      }
+    }
+    // Right to left, the arrows point the other way.
+    :host-context([dir='rtl']) .fold mat-icon {
+      transform: scaleX(-1);
     }
     nav {
       display: grid;
@@ -381,18 +450,26 @@ export interface SideSection {
         margin-block: -6px;
         margin-inline: auto -6px;
       }
+      // On a phone the drawer is the sidebar: nothing to fold.
+      .fold {
+        display: none;
+      }
     }
 
-    // A rail of icons alone, for a page that wants the width (the terminal, the floor).
+    // Folded: a rail of icons alone, the same on every page until it is opened again.
     @media (min-width: 960px) {
       .side-layout.rail {
-        grid-template-columns: 60px minmax(0, 1fr);
+        grid-template-columns: 64px minmax(0, 1fr);
         gap: 12px;
 
         .side {
           padding: 6px;
         }
-        .side-head,
+        .side-head {
+          justify-content: center;
+          padding: 2px 0 6px;
+        }
+        .side-head h1,
         .group span,
         .label {
           display: none;
@@ -403,6 +480,7 @@ export interface SideSection {
         }
         .side-link {
           justify-content: center;
+          min-height: 40px;
           padding: 4px;
         }
         .count {
@@ -458,8 +536,9 @@ export class SideLayout {
   readonly titleEn = input.required<string>();
   readonly titleAr = input.required<string>();
   readonly sections = input.required<SideSection[]>();
-  // Icons alone in the sidebar, the page the width.
-  readonly rail = input(false);
+
+  // Folded to its icons: the user's choice, on every page, kept in this browser.
+  protected readonly collapsed = signal(readCollapsed());
 
   private readonly router = inject(Router);
   private readonly route = inject(ActivatedRoute);
@@ -467,7 +546,7 @@ export class SideLayout {
 
   protected readonly menuOpen = signal(false);
   protected readonly waiting = computed(() => this.sections().some((s) => (s.count ?? 0) > 0));
-  private readonly compact = toSignal(
+  protected readonly compact = toSignal(
     inject(BreakpointObserver)
       .observe(Compact)
       .pipe(map((state) => state.matches)),
@@ -517,6 +596,16 @@ export class SideLayout {
     );
   }
 
+  protected toggleCollapsed(): void {
+    const folded = !this.collapsed();
+    this.collapsed.set(folded);
+    try {
+      localStorage.setItem(CollapsedKey, folded ? '1' : '0');
+    } catch {
+      // Kept for this page only.
+    }
+  }
+
   protected closeMenu(returnFocus = false): void {
     if (!this.menuOpen()) {
       return;
@@ -525,5 +614,13 @@ export class SideLayout {
     if (returnFocus) {
       this.menuButton().nativeElement.focus();
     }
+  }
+}
+
+function readCollapsed(): boolean {
+  try {
+    return localStorage.getItem(CollapsedKey) === '1';
+  } catch {
+    return false;
   }
 }
